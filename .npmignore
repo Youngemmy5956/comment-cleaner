@@ -1,0 +1,9 @@
+# Exclude these from the published npm package
+.git
+.gitignore
+*.test.js
+*.spec.js
+__tests__/
+tests/
+tmp/
+PUBLISHING.md

@@ -1,0 +1,6 @@
+{
+  "extensions": [".js", ".jsx", ".ts", ".tsx", ".py", ".css", ".scss"],
+  "ignore": ["tmp", "fixtures", "__tests__", "migrations"],
+  "report": true,
+  "reportPath": "comment-cleaner-report.md"
+}

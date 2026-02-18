@@ -2,10 +2,10 @@
 
 /**
  * comment-cleaner
- * Scan your codebase for commented-out code and generate a report.
+ * Scan your codebase for commented-out code, preview, fix, and report.
  *
  * Usage:
- *   node index.js [path] [options]
+ *   comment-cleaner [path] [options]
  */
 
 const fs = require("fs");
@@ -13,15 +13,9 @@ const path = require("path");
 
 // ─── ANSI Colors ─────────────────────────────────────────────────────────────
 const c = {
-  reset: "\x1b[0m",
-  bold: "\x1b[1m",
-  dim: "\x1b[2m",
-  red: "\x1b[31m",
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  blue: "\x1b[34m",
-  cyan: "\x1b[36m",
-  white: "\x1b[37m",
+  reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m",
+  red: "\x1b[31m", green: "\x1b[32m", yellow: "\x1b[33m",
+  blue: "\x1b[34m", cyan: "\x1b[36m", white: "\x1b[37m",
 };
 const paint = (col, text) => `${col}${text}${c.reset}`;
 
@@ -48,90 +42,112 @@ const DEFAULT_IGNORE = new Set([
 ]);
 
 // ─── Code detection heuristics ───────────────────────────────────────────────
-// These patterns are STRONG signals that a comment contains actual code.
-// They require syntax, not just keywords used in plain English.
 const CODE_SIGNALS = [
-  // Declarations — keyword immediately followed by a name or punctuation
   /\b(const|let|var)\s+\w+\s*[=:({;]/,
   /\bfunction\s+\w+\s*\(/,
   /\bclass\s+\w+[\s{(]/,
-  // Import / export statements
   /\bimport\s+.+\s+from\s+['"`]/,
   /\bimport\s*{/,
   /\bexport\s+(default\s+)?(function|class|const|let|var)\b/,
   /\brequire\s*\(/,
-  // Return / throw with a value
   /\breturn\s+.+[;)]/,
   /\bthrow\s+new\s+\w+/,
-  // Assignments  e.g.  foo = bar(  or  foo.bar = "x"
   /\w[\w.[\]]*\s*=[^=>]\s*.+/,
-  // Function calls with arguments e.g. foo(bar) or foo.bar(baz)
   /\w[\w.]*\s*\(.+\)\s*[;{,)]/,
-  // Arrow functions
   /\(.*\)\s*=>/,
   /\w+\s*=>\s*[{(]/,
-  // Control flow with parens — if (...) not "if this happens"
   /\b(if|while|for)\s*\(.+\)/,
-  // JSX / HTML tags that look like code  <Component  or </div>
   /^\s*<[A-Z]\w+[\s/>]/,
   /^\s*<\/\w+>/,
-  // Closing braces alone — } or }); or });
   /^\s*[}\]]{1,3}\s*[;,)]*\s*$/,
-  // Trailing semicolons on non-trivial lines
   /\w.{4,};\s*$/,
-  // Python-specific
   /\bdef\s+\w+\s*\(/,
   /\bself\.\w+\s*[=(]/,
   /\bprint\s*\(.+\)/,
-  /^\s*@\w+(\(.*\))?\s*$/,   // Python decorators
+  /^\s*@\w+(\(.*\))?\s*$/,
 ];
 
-// These patterns mean it's DEFINITELY prose — skip immediately
 const PROSE_SIGNALS = [
   /^(TODO|FIXME|HACK|NOTE|XXX|BUG|OPTIMIZE|REVIEW|WARN|WARNING|NB)\b/i,
   /^https?:\/\//,
-  /^[-=*#]+\s/,              // markdown-style or section dividers
+  /^[-=*#]+\s/,
   /^@(param|returns?|type|throws?|deprecated|see|example|author)\b/i,
-  // Sentences — start with capital letter followed by lowercase words (prose)
   /^[A-Z][a-z]+ [a-z]/,
-  // Ends with a period — prose sentence
   /\.\s*$/,
-  // Common explanatory starters
   /^(This|The|A |An |We |It |Used|Use|Handles?|Helper|Check|Load|Set|Get|Add|Remove|Create|Update|Delete|Init|Initialize|Format|Convert|Parse|Build|Render|Show|Hide|Listen|Watch|Fetch|Send|Save|Clear|Reset|Toggle|Dispatch|Extract|Calculate|Find|Sort|Filter|Map|Wrap|Only|Also|Note|See|For|When|If this|Cleanup)\b/i,
-  // CSS section labels like /* Large Desktop */ or /* Active card */
   /^[A-Z][^{};]+$/,
 ];
 
-// Require at least this many CODE_SIGNALS to match for multi-line blocks
 const MULTI_LINE_THRESHOLD = 2;
 
 function looksLikeCode(text) {
   const t = text.trim();
   if (!t || t.length < 5) return false;
-
-  // Immediately reject prose
   for (const p of PROSE_SIGNALS) if (p.test(t)) return false;
-
-  // Check code signals — need at least one strong match
   let score = 0;
   for (const p of CODE_SIGNALS) if (p.test(t)) score++;
   return score >= 1;
 }
 
 function looksLikeCodeBlock(lines) {
-  // For multi-line blocks, require stronger evidence
   const combined = lines.map(l => l.trim()).join(" ");
   if (!combined || combined.length < 10) return false;
-
   for (const p of PROSE_SIGNALS) if (p.test(combined.trim())) return false;
-
   let score = 0;
   for (const p of CODE_SIGNALS) if (p.test(combined)) score++;
-  // Also check individual lines
   for (const line of lines) {
     for (const p of CODE_SIGNALS) if (p.test(line.trim())) score++;
   }
   return score >= MULTI_LINE_THRESHOLD;
+}
+
+// ─── Config file loader (.commentcleanerrc) ───────────────────────────────────
+function loadConfig(startDir) {
+  const configNames = [".commentcleanerrc", ".commentcleanerrc.json", "commentcleaner.config.json"];
+  let dir = startDir;
+
+  // Walk up the directory tree looking for a config file
+  for (let i = 0; i < 6; i++) {
+    for (const name of configNames) {
+      const configPath = path.join(dir, name);
+      if (fs.existsSync(configPath)) {
+        try {
+          const raw = fs.readFileSync(configPath, "utf8");
+          const config = JSON.parse(raw);
+          console.log(paint(c.dim, `  ⚙️  Config loaded from: ${path.relative(process.cwd(), configPath)}\n`));
+          return config;
+        } catch (e) {
+          console.warn(paint(c.yellow, `  ⚠️  Could not parse config file: ${configPath}`));
+        }
+      }
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return {};
+}
+
+function applyConfig(opts, config) {
+  // Config file values are defaults — CLI flags override them
+  if (config.extensions && opts.extensions === null) {
+    opts.extensions = new Set(
+      config.extensions.map(e => e.startsWith(".") ? e.toLowerCase() : "." + e.toLowerCase())
+    );
+  }
+  if (config.ignore && opts.extraIgnore.length === 0) {
+    opts.extraIgnore = config.ignore;
+  }
+  if (config.report !== undefined && !opts.report) {
+    opts.report = config.report;
+  }
+  if (config.reportPath && !opts.reportPath) {
+    opts.reportPath = config.reportPath;
+  }
+  if (config.fix !== undefined && !opts.fix) {
+    opts.fix = config.fix;
+  }
+  return opts;
 }
 
 // ─── File parser ──────────────────────────────────────────────────────────────
@@ -146,8 +162,7 @@ function parseFile(filePath, lang) {
 
     // Single-line comment
     if (lang.single && trimmed.startsWith(lang.single)) {
-      if (trimmed.startsWith("///")) { i++; continue; } // skip triple-slash doc comments
-
+      if (trimmed.startsWith("///")) { i++; continue; }
       const text = trimmed.slice(lang.single.length).trim();
       if (looksLikeCode(text)) {
         const group = [{ lineNum: i + 1, raw: line }];
@@ -172,11 +187,9 @@ function parseFile(filePath, lang) {
 
     // Multi-line comment
     if (lang.mlStart && trimmed.startsWith(lang.mlStart)) {
-      // Skip JSDoc /** ... */
       if (lang.doc && trimmed.startsWith(lang.doc) && lang.doc !== lang.mlStart) {
         i++; continue;
       }
-
       const group = [{ lineNum: i + 1, raw: line }];
       let closed = trimmed.includes(lang.mlEnd) && trimmed.length > lang.mlStart.length;
       let j = i + 1;
@@ -185,10 +198,8 @@ function parseFile(filePath, lang) {
         if (lines[j].includes(lang.mlEnd)) closed = true;
         j++;
       }
-
       const innerLines = group
         .map((l) => l.raw.replace(/^[\s/*#"]+/, "").replace(/[\s/*"]+$/, ""));
-
       if (looksLikeCodeBlock(innerLines)) {
         blocks.push({ startLine: i + 1, endLine: group[group.length - 1].lineNum, lines: group });
       }
@@ -202,6 +213,19 @@ function parseFile(filePath, lang) {
   return blocks;
 }
 
+// ─── Fix: remove commented blocks from a file ────────────────────────────────
+function fixFile(filePath, blocks) {
+  const lines = fs.readFileSync(filePath, "utf8").split("\n");
+  const linesToRemove = new Set();
+  for (const block of blocks) {
+    for (let i = block.startLine - 1; i < block.endLine; i++) {
+      linesToRemove.add(i);
+    }
+  }
+  const cleaned = lines.filter((_, idx) => !linesToRemove.has(idx)).join("\n");
+  fs.writeFileSync(filePath, cleaned, "utf8");
+}
+
 // ─── Directory walker ─────────────────────────────────────────────────────────
 function walkDir(dirPath, allowedExts, extraIgnore) {
   const ignore = new Set([...DEFAULT_IGNORE, ...extraIgnore]);
@@ -210,11 +234,9 @@ function walkDir(dirPath, allowedExts, extraIgnore) {
   function walk(current) {
     const parts = current.split(path.sep);
     if (parts.some((p) => ignore.has(p))) return;
-
     let entries;
     try { entries = fs.readdirSync(current, { withFileTypes: true }); }
     catch { return; }
-
     for (const entry of entries) {
       const full = path.join(current, entry.name);
       if (entry.isDirectory()) {
@@ -248,7 +270,6 @@ function printPreview(findings, meta) {
       paint(c.yellow + c.bold, `\n📄 ${filePath}`) +
       paint(c.dim, `  (${blocks.length} block${blocks.length > 1 ? "s" : ""})`)
     );
-
     for (const block of blocks) {
       const range = block.startLine === block.endLine
         ? `line ${block.startLine}`
@@ -336,9 +357,10 @@ function parseArgs(argv) {
     targetPath: ".",
     report: false,
     reportPath: null,
-    extensions: new Set(Object.keys(LANGUAGES)),
+    extensions: null,           // null = load from config or use defaults
     extraIgnore: [],
     noPreview: false,
+    fix: false,
     help: false,
   };
 
@@ -358,6 +380,8 @@ function parseArgs(argv) {
       opts.extraIgnore = (args[++i] || "").split(",").map((s) => s.trim());
     } else if (a === "--no-preview") {
       opts.noPreview = true;
+    } else if (a === "--fix" || a === "-f") {
+      opts.fix = true;
     } else if (!a.startsWith("-")) {
       opts.targetPath = a;
     }
@@ -368,10 +392,10 @@ function parseArgs(argv) {
 
 function printHelp() {
   console.log(`
-${paint(c.cyan + c.bold, "comment-cleaner")} — Find commented-out code in your codebase
+${paint(c.cyan + c.bold, "comment-cleaner")} — Find and remove commented-out code
 
 ${paint(c.bold, "Usage:")}
-  node index.js [path] [options]
+  comment-cleaner [path] [options]
 
 ${paint(c.bold, "Arguments:")}
   path                    Directory or file to scan  (default: current dir)
@@ -380,9 +404,19 @@ ${paint(c.bold, "Options:")}
   -h, --help              Show this help
   -r, --report [file]     Save findings as a Markdown report
                           Default filename: comment-cleaner-YYYY-MM-DD.md
+  -f, --fix               Automatically remove all detected commented-out code
   -e, --ext .js,.ts,.py   Only scan these extensions (comma-separated)
   --ignore dir1,dir2      Extra directories to skip (added to defaults)
-  --no-preview            Skip console output — useful when only generating a report
+  --no-preview            Suppress terminal output
+
+${paint(c.bold, "Config file:")}
+  Create a ${paint(c.cyan, ".commentcleanerrc")} file in your project root to set defaults:
+  {
+    "extensions": [".js", ".ts", ".tsx"],
+    "ignore": ["tmp", "fixtures"],
+    "report": true,
+    "reportPath": "reports/comments.md"
+  }
 
 ${paint(c.bold, "Default extensions scanned:")}
   .js  .jsx  .ts  .tsx  .mjs  .cjs  .py  .css  .scss  .sass  .less
@@ -392,26 +426,26 @@ ${paint(c.bold, "Always-ignored directories:")}
   .venv  venv  coverage  .nyc_output  .cache  vendor
 
 ${paint(c.bold, "Examples:")}
-  node index.js                          Scan current directory
-  node index.js ./src                    Scan ./src
-  node index.js ./src -r                 Scan and save report
-  node index.js ./src -r cleanup.md      Scan and save report to custom file
-  node index.js . -e .js,.ts            Only JS and TS files
-  node index.js . --ignore tmp,fixtures  Skip extra directories
-  node index.js . --no-preview -r        Report only, no terminal output
+  comment-cleaner                        Scan current directory
+  comment-cleaner ./src                  Scan ./src
+  comment-cleaner ./src -r               Scan and save report
+  comment-cleaner ./src --fix            Remove all commented-out code
+  comment-cleaner ./src --fix -r         Remove and save report of what was removed
+  comment-cleaner . -e .js,.ts           Only JS and TS files
+  comment-cleaner . --no-preview -r      Report only, no terminal output
 `);
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 function main() {
-  const opts = parseArgs(process.argv);
+  let opts = parseArgs(process.argv);
 
   if (opts.help) { printHelp(); process.exit(0); }
 
   console.log(paint(c.cyan + c.bold, `
 ╔══════════════════════════════════════╗
 ║      🧹  comment-cleaner  🧹         ║
-║   Scan your codebase · Get a report  ║
+║  Scan · Fix · Report                 ║
 ╚══════════════════════════════════════╝`));
 
   const targetPath = path.resolve(opts.targetPath);
@@ -421,10 +455,20 @@ function main() {
     process.exit(1);
   }
 
+  // Load config file and merge (CLI flags take priority)
+  const config = loadConfig(path.dirname(targetPath));
+  opts = applyConfig(opts, config);
+
+  // Fall back to all supported extensions if none set
+  if (!opts.extensions) {
+    opts.extensions = new Set(Object.keys(LANGUAGES));
+  }
+
   const isFile = fs.statSync(targetPath).isFile();
 
   console.log(paint(c.blue, `\n🔍 Scanning: ${paint(c.bold + c.blue, targetPath)}`));
   console.log(paint(c.dim, `   Extensions : ${[...opts.extensions].join("  ")}`));
+  if (opts.fix) console.log(paint(c.yellow, `   Mode       : --fix (will remove commented-out code)`));
   if (opts.extraIgnore.length) {
     console.log(paint(c.dim, `   Extra ignore: ${opts.extraIgnore.join(", ")}`));
   }
@@ -462,9 +506,34 @@ function main() {
     extensions: opts.extensions,
   };
 
-  // Console output
+  // Console preview
   if (!opts.noPreview) {
     printPreview(findings, meta);
+  }
+
+  // --fix: remove all commented-out code
+  if (opts.fix) {
+    const fileCount = Object.keys(findings).length;
+    if (fileCount === 0) {
+      console.log(paint(c.green, "✅  Nothing to fix — codebase is already clean!\n"));
+    } else {
+      console.log(paint(c.yellow + c.bold, `\n🔧 Fixing ${fileCount} file(s)...\n`));
+      let fixedCount = 0;
+      for (const [relPath, blocks] of Object.entries(findings)) {
+        const absPath = path.resolve(relPath);
+        try {
+          fixFile(absPath, blocks);
+          console.log(
+            paint(c.green, `  ✅ ${relPath}`) +
+            paint(c.dim, `  (${blocks.length} block${blocks.length > 1 ? "s" : ""} removed)`)
+          );
+          fixedCount++;
+        } catch (err) {
+          console.warn(paint(c.red, `  ❌ Could not fix ${relPath}: ${err.message}`));
+        }
+      }
+      console.log(paint(c.green + c.bold, `\n🎉 Done! Fixed ${fixedCount} file(s).\n`));
+    }
   }
 
   // Report
@@ -473,8 +542,13 @@ function main() {
     const reportPath = opts.reportPath || `comment-cleaner-${timestamp}.md`;
     fs.writeFileSync(reportPath, renderReport(findings, meta), "utf8");
     console.log(paint(c.green + c.bold, `📊 Report saved → ${reportPath}\n`));
-  } else {
-    console.log(paint(c.dim, "  💡 Add -r to save a Markdown report of these findings.\n"));
+  } else if (!opts.fix) {
+    console.log(paint(c.dim, "  💡 Add -r to save a report  |  Add --fix to remove all flagged blocks.\n"));
+  }
+
+  // Exit with code 1 if issues found (useful for CI)
+  if (opts.fix === false && Object.keys(findings).length > 0) {
+    process.exitCode = 1;
   }
 }
 

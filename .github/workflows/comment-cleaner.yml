@@ -1,0 +1,45 @@
+name: 🧹 Comment Cleaner
+
+on:
+  pull_request:
+    branches: [main, master, develop]
+  push:
+    branches: [main, master]
+
+jobs:
+  scan:
+    name: Scan for commented-out code
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install comment-cleaner
+        run: npm install -g @youngemmy/comment-cleaner
+
+      - name: Run comment-cleaner
+        run: |
+          comment-cleaner . --no-preview -r comment-cleaner-report.md || true
+
+      - name: Upload report as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: comment-cleaner-report
+          path: comment-cleaner-report.md
+          retention-days: 30
+
+      - name: Post summary to job
+        if: always()
+        run: |
+          if [ -f comment-cleaner-report.md ]; then
+            echo "## 🧹 Comment Cleaner Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            cat comment-cleaner-report.md >> $GITHUB_STEP_SUMMARY
+          fi

@@ -1,6 +1,6 @@
 # 🧹 comment-cleaner
 
-> A zero-dependency CLI that scans your codebase for commented-out code, previews findings in the terminal, and exports a clean Markdown report.
+> A zero-dependency CLI that scans your codebase for **commented-out code**, previews findings in the terminal, and exports a clean Markdown report.
 
 [![npm version](https://img.shields.io/npm/v/@youngemmy/comment-cleaner.svg)](https://www.npmjs.com/package/@youngemmy/comment-cleaner)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -12,7 +12,7 @@
 
 - 🔍 **Preview mode** — see all commented-out code blocks with file path and line numbers, no changes made
 - 📊 **Report mode** — export a clean Markdown report, perfect for code reviews and sharing with your team
-- 🧠 **Smart detection** — skips `// TODO`, prose comments, and JSDoc (`/** */`). Only flags actual commented-out code
+- 🧠 **Smart detection** — only flags actual commented-out code. Ignores explanatory comments, section labels, TODOs, and JSDoc
 - 🌍 **Multi-language** — JS, TS, JSX, TSX, Python, CSS, SCSS, and more
 - ⚡ **Zero dependencies** — pure Node.js, nothing to install
 
@@ -87,16 +87,56 @@ Use `-e` to add any other extension you need.
 
 ## 🧠 How Detection Works
 
-The tool uses heuristics to tell the difference between useful comments and dead code:
+The tool is designed to flag **only dead code** — not comments that explain what your code does.
 
-| Comment type | Result | Example |
-|---|---|---|
-| TODO / FIXME | ✅ Kept | `// TODO: add retry logic` |
-| Prose explanation | ✅ Kept | `// This function handles auth` |
-| JSDoc / docstring | ✅ Kept | `/** @param {string} id */` |
-| Commented-out variable | ❌ Flagged | `// const BASE_URL = 'https://...'` |
-| Commented-out function | ❌ Flagged | `// function oldLogin() {` |
-| Commented-out block | ❌ Flagged | `/* if (err) { throw err; } */` |
+### ✅ These are KEPT (not flagged)
+
+```js
+// Load posts from Firebase
+// Helper function to split the title
+// Check for mobile device and set up event listeners
+// This handles the authentication flow
+// Cleanup function
+```
+
+```css
+/* Large Desktop (1440px and up) */
+/* Active card (hovered) */
+/* Focus States for Accessibility */
+```
+
+```js
+// TODO: add retry logic
+// NOTE: this runs on every render
+/** @param {string} id - The user ID */
+```
+
+### ❌ These are FLAGGED (actual commented-out code)
+
+```js
+// import TwitterTimeline from "../components/TwitterTimeline";
+// const BASE_URL = 'https://api.legacy.com/v1';
+// const TIMEOUT = 5000;
+
+// function oldGetUser(id: string) {
+//   const user = db.query(`SELECT * FROM users WHERE id = '${id}'`);
+//   return user;
+// }
+```
+
+```css
+/* .old-card {
+  position: relative;
+  border-radius: 0.75rem;
+  overflow: hidden;
+} */
+```
+
+```python
+# old_hash = hashlib.md5(password.encode()).hexdigest()
+# if old_hash == stored_hash:
+#     return True
+```
 
 ---
 
@@ -114,7 +154,7 @@ When you run `comment-cleaner ./src -r`, you get a Markdown file like this:
 ```markdown
 # 🧹 Comment Cleaner Report
 
-> Generated: 2026-02-17T10:00:00.000Z
+> Generated: 2026-02-18T10:00:00.000Z
 > Scanned path: src
 
 ## Summary

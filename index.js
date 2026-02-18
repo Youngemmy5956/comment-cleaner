@@ -27,14 +27,14 @@ const paint = (col, text) => `${col}${text}${c.reset}`;
 
 // ─── Language Definitions ─────────────────────────────────────────────────────
 const LANGUAGES = {
-  ".js":   { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "JavaScript" },
-  ".jsx":  { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "JSX" },
-  ".ts":   { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "TypeScript" },
-  ".tsx":  { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "TSX" },
-  ".mjs":  { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "ESModule" },
-  ".cjs":  { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "CJS" },
-  ".py":   { single: "#",  mlStart: '"""', mlEnd: '"""', doc: null, name: "Python" },
-  ".css":  { single: null, mlStart: "/*", mlEnd: "*/", doc: "/**", name: "CSS" },
+  ".js": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "JavaScript" },
+  ".jsx": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "JSX" },
+  ".ts": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "TypeScript" },
+  ".tsx": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "TSX" },
+  ".mjs": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "ESModule" },
+  ".cjs": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "CJS" },
+  ".py": { single: "#", mlStart: '"""', mlEnd: '"""', doc: null, name: "Python" },
+  ".css": { single: null, mlStart: "/*", mlEnd: "*/", doc: "/**", name: "CSS" },
   ".scss": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "SCSS" },
   ".sass": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "Sass" },
   ".less": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "Less" },
@@ -48,31 +48,90 @@ const DEFAULT_IGNORE = new Set([
 ]);
 
 // ─── Code detection heuristics ───────────────────────────────────────────────
+// These patterns are STRONG signals that a comment contains actual code.
+// They require syntax, not just keywords used in plain English.
 const CODE_SIGNALS = [
-  /\b(const|let|var|function|class|return|import|export|from|require)\b/,
-  /\b(if|else|for|while|switch|try|catch|throw|new|delete|async|await)\b/,
-  /\b(def|lambda|print|self\.|super\(\)|import |from \w+ import)\b/,
-  /\w+\s*\(.*\)/,          // function calls
-  /\w+\s*=[^=>]/,          // assignments (not => arrow)
-  /=>/,                    // arrow functions
-  /;\s*$/,                 // trailing semicolons
-  /^\s*[}\])\s*;?]+\s*$/,  // closing braces alone on a line
-  /<\/?\w[\w.]*>/,         // HTML / JSX tags
+  // Declarations — keyword immediately followed by a name or punctuation
+  /\b(const|let|var)\s+\w+\s*[=:({;]/,
+  /\bfunction\s+\w+\s*\(/,
+  /\bclass\s+\w+[\s{(]/,
+  // Import / export statements
+  /\bimport\s+.+\s+from\s+['"`]/,
+  /\bimport\s*{/,
+  /\bexport\s+(default\s+)?(function|class|const|let|var)\b/,
+  /\brequire\s*\(/,
+  // Return / throw with a value
+  /\breturn\s+.+[;)]/,
+  /\bthrow\s+new\s+\w+/,
+  // Assignments  e.g.  foo = bar(  or  foo.bar = "x"
+  /\w[\w.[\]]*\s*=[^=>]\s*.+/,
+  // Function calls with arguments e.g. foo(bar) or foo.bar(baz)
+  /\w[\w.]*\s*\(.+\)\s*[;{,)]/,
+  // Arrow functions
+  /\(.*\)\s*=>/,
+  /\w+\s*=>\s*[{(]/,
+  // Control flow with parens — if (...) not "if this happens"
+  /\b(if|while|for)\s*\(.+\)/,
+  // JSX / HTML tags that look like code  <Component  or </div>
+  /^\s*<[A-Z]\w+[\s/>]/,
+  /^\s*<\/\w+>/,
+  // Closing braces alone — } or }); or });
+  /^\s*[}\]]{1,3}\s*[;,)]*\s*$/,
+  // Trailing semicolons on non-trivial lines
+  /\w.{4,};\s*$/,
+  // Python-specific
+  /\bdef\s+\w+\s*\(/,
+  /\bself\.\w+\s*[=(]/,
+  /\bprint\s*\(.+\)/,
+  /^\s*@\w+(\(.*\))?\s*$/,   // Python decorators
 ];
 
+// These patterns mean it's DEFINITELY prose — skip immediately
 const PROSE_SIGNALS = [
-  /^(TODO|FIXME|HACK|NOTE|XXX|BUG|OPTIMIZE|REVIEW)\b/i,
+  /^(TODO|FIXME|HACK|NOTE|XXX|BUG|OPTIMIZE|REVIEW|WARN|WARNING|NB)\b/i,
   /^https?:\/\//,
-  /^[-=*]+$/,
-  /^@\w+/,     // JSDoc tags like @param, @returns
+  /^[-=*#]+\s/,              // markdown-style or section dividers
+  /^@(param|returns?|type|throws?|deprecated|see|example|author)\b/i,
+  // Sentences — start with capital letter followed by lowercase words (prose)
+  /^[A-Z][a-z]+ [a-z]/,
+  // Ends with a period — prose sentence
+  /\.\s*$/,
+  // Common explanatory starters
+  /^(This|The|A |An |We |It |Used|Use|Handles?|Helper|Check|Load|Set|Get|Add|Remove|Create|Update|Delete|Init|Initialize|Format|Convert|Parse|Build|Render|Show|Hide|Listen|Watch|Fetch|Send|Save|Clear|Reset|Toggle|Dispatch|Extract|Calculate|Find|Sort|Filter|Map|Wrap|Only|Also|Note|See|For|When|If this|Cleanup)\b/i,
+  // CSS section labels like /* Large Desktop */ or /* Active card */
+  /^[A-Z][^{};]+$/,
 ];
+
+// Require at least this many CODE_SIGNALS to match for multi-line blocks
+const MULTI_LINE_THRESHOLD = 2;
 
 function looksLikeCode(text) {
   const t = text.trim();
-  if (!t || t.length < 4) return false;
+  if (!t || t.length < 5) return false;
+
+  // Immediately reject prose
   for (const p of PROSE_SIGNALS) if (p.test(t)) return false;
-  for (const p of CODE_SIGNALS)  if (p.test(t)) return true;
-  return false;
+
+  // Check code signals — need at least one strong match
+  let score = 0;
+  for (const p of CODE_SIGNALS) if (p.test(t)) score++;
+  return score >= 1;
+}
+
+function looksLikeCodeBlock(lines) {
+  // For multi-line blocks, require stronger evidence
+  const combined = lines.map(l => l.trim()).join(" ");
+  if (!combined || combined.length < 10) return false;
+
+  for (const p of PROSE_SIGNALS) if (p.test(combined.trim())) return false;
+
+  let score = 0;
+  for (const p of CODE_SIGNALS) if (p.test(combined)) score++;
+  // Also check individual lines
+  for (const line of lines) {
+    for (const p of CODE_SIGNALS) if (p.test(line.trim())) score++;
+  }
+  return score >= MULTI_LINE_THRESHOLD;
 }
 
 // ─── File parser ──────────────────────────────────────────────────────────────
@@ -127,11 +186,10 @@ function parseFile(filePath, lang) {
         j++;
       }
 
-      const inner = group
-        .map((l) => l.raw.replace(/^[\s/*#"]+/, "").replace(/[\s/*"]+$/, ""))
-        .join(" ");
+      const innerLines = group
+        .map((l) => l.raw.replace(/^[\s/*#"]+/, "").replace(/[\s/*"]+$/, ""));
 
-      if (looksLikeCode(inner)) {
+      if (looksLikeCodeBlock(innerLines)) {
         blocks.push({ startLine: i + 1, endLine: group[group.length - 1].lineNum, lines: group });
       }
       i = j;
@@ -174,9 +232,9 @@ function walkDir(dirPath, allowedExts, extraIgnore) {
 
 // ─── Console preview ──────────────────────────────────────────────────────────
 function printPreview(findings, meta) {
-  const fileCount   = Object.keys(findings).length;
+  const fileCount = Object.keys(findings).length;
   const totalBlocks = Object.values(findings).reduce((s, b) => s + b.length, 0);
-  const totalLines  = Object.values(findings).reduce(
+  const totalLines = Object.values(findings).reduce(
     (s, blocks) => s + blocks.reduce((ss, b) => ss + (b.endLine - b.startLine + 1), 0), 0
   );
 
@@ -207,19 +265,19 @@ function printPreview(findings, meta) {
   }
 
   console.log(paint(c.cyan + c.bold, "\n═══════════════════ Summary ═══════════════════"));
-  console.log(`  ${paint(c.white,  "Files scanned:         ")} ${meta.totalFiles}`);
+  console.log(`  ${paint(c.white, "Files scanned:         ")} ${meta.totalFiles}`);
   console.log(`  ${paint(c.yellow, "Files with issues:     ")} ${fileCount}`);
-  console.log(`  ${paint(c.red,    "Commented blocks:      ")} ${totalBlocks}`);
-  console.log(`  ${paint(c.dim,    "Lines affected:        ")} ${totalLines}`);
+  console.log(`  ${paint(c.red, "Commented blocks:      ")} ${totalBlocks}`);
+  console.log(`  ${paint(c.dim, "Lines affected:        ")} ${totalLines}`);
   console.log();
 }
 
 // ─── Markdown report ──────────────────────────────────────────────────────────
 function renderReport(findings, meta) {
-  const now         = new Date().toISOString();
-  const fileCount   = Object.keys(findings).length;
+  const now = new Date().toISOString();
+  const fileCount = Object.keys(findings).length;
   const totalBlocks = Object.values(findings).reduce((s, b) => s + b.length, 0);
-  const totalLines  = Object.values(findings).reduce(
+  const totalLines = Object.values(findings).reduce(
     (s, blocks) => s + blocks.reduce((ss, b) => ss + (b.endLine - b.startLine + 1), 0), 0
   );
 

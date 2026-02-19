@@ -13,43 +13,33 @@ const c = {
   reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m",
   red: "\x1b[31m", green: "\x1b[32m", yellow: "\x1b[33m",
   blue: "\x1b[34m", cyan: "\x1b[36m", white: "\x1b[37m",
-  magenta: "\x1b[35m",
+  magenta: "\x1b[35m", orange: "\x1b[38;5;208m",
 };
 const paint = (col, text) => `${col}${text}${c.reset}`;
 
 // ─── Language Definitions ─────────────────────────────────────────────────────
 const LANGUAGES = {
-  // JavaScript / TypeScript
   ".js": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "JavaScript" },
   ".jsx": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "JSX" },
   ".ts": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "TypeScript" },
   ".tsx": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "TSX" },
   ".mjs": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "ESModule" },
   ".cjs": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "CJS" },
-  // Python
   ".py": { single: "#", mlStart: '"""', mlEnd: '"""', doc: null, name: "Python" },
-  // CSS family
   ".css": { single: null, mlStart: "/*", mlEnd: "*/", doc: "/**", name: "CSS" },
   ".scss": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "SCSS" },
   ".sass": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "Sass" },
   ".less": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "Less" },
-  // Go
   ".go": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "Go" },
-  // Java / Kotlin
   ".java": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "Java" },
   ".kt": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "Kotlin" },
   ".kts": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "Kotlin Script" },
-  // Rust
   ".rs": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "///", name: "Rust" },
-  // Ruby
   ".rb": { single: "#", mlStart: "=begin", mlEnd: "=end", doc: null, name: "Ruby" },
-  // PHP
   ".php": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "PHP" },
-  // C / C++
   ".c": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "C" },
   ".cpp": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "C++" },
   ".h": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "C Header" },
-  // Swift
   ".swift": { single: "//", mlStart: "/*", mlEnd: "*/", doc: "/**", name: "Swift" },
 };
 
@@ -60,6 +50,20 @@ const DEFAULT_IGNORE = new Set([
   "coverage", ".nyc_output", ".cache", "vendor",
   "target", "bin", "obj", "pkg", "Pods",
 ]);
+
+// ─── Severity thresholds ──────────────────────────────────────────────────────
+const SEVERITY = {
+  HIGH: { minLines: 10, label: "🔴 HIGH", color: "\x1b[31m" },
+  MEDIUM: { minLines: 4, label: "🟡 MEDIUM", color: "\x1b[33m" },
+  LOW: { minLines: 1, label: "🟢 LOW", color: "\x1b[32m" },
+};
+
+function getSeverity(block) {
+  const lineCount = block.endLine - block.startLine + 1;
+  if (lineCount >= SEVERITY.HIGH.minLines) return SEVERITY.HIGH;
+  if (lineCount >= SEVERITY.MEDIUM.minLines) return SEVERITY.MEDIUM;
+  return SEVERITY.LOW;
+}
 
 // ─── Code detection heuristics ───────────────────────────────────────────────
 const CODE_SIGNALS = [
@@ -81,43 +85,34 @@ const CODE_SIGNALS = [
   /^\s*<\/\w+>/,
   /^\s*[}\]]{1,3}\s*[;,)]*\s*$/,
   /\w.{4,};\s*$/,
-  // Python
   /\bdef\s+\w+\s*\(/,
   /\bself\.\w+\s*[=(]/,
   /\bprint\s*\(.+\)/,
   /^\s*@\w+(\(.*\))?\s*$/,
-  // Go
   /\bfunc\s+\w+\s*\(/,
   /\bfmt\.\w+\s*\(/,
   /\bvar\s+\w+\s+\w+/,
   /\b:=\s*/,
-  // Java / Kotlin
   /\b(public|private|protected|static|final)\s+\w+/,
   /\bSystem\.out\./,
   /\bvoid\s+\w+\s*\(/,
   /\bnew\s+\w+\s*\(/,
-  // Rust
   /\bfn\s+\w+\s*\(/,
   /\blet\s+mut\s+\w+/,
   /\bprintln!\s*\(/,
   /\buse\s+\w+::/,
-  // Ruby
   /\bdef\s+\w+/,
   /\bend\s*$/,
   /\bputs\s+/,
   /\b(attr_accessor|attr_reader|attr_writer)\s+/,
-  // PHP
   /\$\w+\s*=/,
   /\becho\s+/,
   /\bfunction\s+\w+\s*\(\s*\$\w*/,
-  // C / C++
   /\b(int|void|char|float|double|bool|auto)\s+\w+\s*[=(;{]/,
   /\bstd::\w+/,
   /\b#include\s*[<"]/,
   /\bprintf\s*\(/,
-  // Swift
   /\b(func|var|let|struct|enum|protocol)\s+\w+/,
-  /\bprint\s*\(/,
 ];
 
 const PROSE_SIGNALS = [
@@ -132,6 +127,12 @@ const PROSE_SIGNALS = [
 ];
 
 const MULTI_LINE_THRESHOLD = 2;
+
+// ─── @keep annotation ─────────────────────────────────────────────────────────
+// If a comment contains @keep, it is permanently ignored by the tool
+function hasKeepAnnotation(lines) {
+  return lines.some(l => /@keep\b/i.test(l.raw || l));
+}
 
 function looksLikeCode(text) {
   const t = text.trim();
@@ -205,6 +206,10 @@ function parseFile(filePath, lang) {
     if (lang.single && trimmed.startsWith(lang.single)) {
       if (trimmed.startsWith("///")) { i++; continue; }
       const text = trimmed.slice(lang.single.length).trim();
+
+      // Check for @keep on this single line
+      if (/@keep\b/i.test(text)) { i++; continue; }
+
       if (looksLikeCode(text)) {
         const group = [{ lineNum: i + 1, raw: line }];
         let j = i + 1;
@@ -212,11 +217,15 @@ function parseFile(filePath, lang) {
           const next = lines[j].trim();
           if (next.startsWith(lang.single) && !next.startsWith("///")) {
             const nextText = next.slice(lang.single.length).trim();
+            if (/@keep\b/i.test(nextText)) { j++; break; }
             if (looksLikeCode(nextText)) { group.push({ lineNum: j + 1, raw: lines[j] }); j++; continue; }
           }
           break;
         }
-        blocks.push({ startLine: i + 1, endLine: group[group.length - 1].lineNum, lines: group });
+        // Skip the whole block if any line has @keep
+        if (!hasKeepAnnotation(group)) {
+          blocks.push({ startLine: i + 1, endLine: group[group.length - 1].lineNum, lines: group });
+        }
         i = j;
         continue;
       }
@@ -232,6 +241,9 @@ function parseFile(filePath, lang) {
         if (lines[j].includes(lang.mlEnd)) closed = true;
         j++;
       }
+      // Skip if @keep anywhere in the block
+      if (hasKeepAnnotation(group)) { i = j; continue; }
+
       const innerLines = group.map(l => l.raw.replace(/^[\s/*#"=]+/, "").replace(/[\s/*"=]+$/, ""));
       if (looksLikeCodeBlock(innerLines)) {
         blocks.push({ startLine: i + 1, endLine: group[group.length - 1].lineNum, lines: group });
@@ -260,7 +272,6 @@ function fixFile(filePath, blocks) {
 function walkDir(dirPath, allowedExts, extraIgnore) {
   const ignore = new Set([...DEFAULT_IGNORE, ...extraIgnore]);
   const files = [];
-
   function walk(current) {
     const parts = current.split(path.sep);
     if (parts.some(p => ignore.has(p))) return;
@@ -275,13 +286,12 @@ function walkDir(dirPath, allowedExts, extraIgnore) {
       }
     }
   }
-
   walk(dirPath);
   return files;
 }
 
 // ─── Console preview ──────────────────────────────────────────────────────────
-function printPreview(findings, meta) {
+function printPreview(findings, meta, opts = {}) {
   const fileCount = Object.keys(findings).length;
   const totalBlocks = Object.values(findings).reduce((s, b) => s + b.length, 0);
   const totalLines = Object.values(findings).reduce(
@@ -293,16 +303,28 @@ function printPreview(findings, meta) {
     return;
   }
 
+  // Severity counts
+  let highCount = 0, medCount = 0, lowCount = 0;
+
   for (const [filePath, blocks] of Object.entries(findings)) {
     console.log(
       paint(c.yellow + c.bold, `\n📄 ${filePath}`) +
       paint(c.dim, `  (${blocks.length} block${blocks.length > 1 ? "s" : ""})`)
     );
     for (const block of blocks) {
+      const sev = getSeverity(block);
+      if (sev === SEVERITY.HIGH) highCount++;
+      else if (sev === SEVERITY.MEDIUM) medCount++;
+      else lowCount++;
+
       const range = block.startLine === block.endLine
         ? `line ${block.startLine}`
         : `lines ${block.startLine}–${block.endLine}`;
-      console.log(paint(c.dim, `  ┌─ ${range} ${"─".repeat(Math.max(0, 46 - range.length))}`));
+
+      console.log(
+        paint(c.dim, `  ┌─ ${range} ${"─".repeat(Math.max(0, 36 - range.length))} `) +
+        paint(sev.color + c.bold, sev.label)
+      );
       for (const l of block.lines) {
         console.log(paint(c.dim, `  │ ${String(l.lineNum).padStart(4)}  `) + paint(c.red, l.raw));
       }
@@ -315,6 +337,10 @@ function printPreview(findings, meta) {
   console.log(`  ${paint(c.yellow, "Files with issues:     ")} ${fileCount}`);
   console.log(`  ${paint(c.red, "Commented blocks:      ")} ${totalBlocks}`);
   console.log(`  ${paint(c.dim, "Lines affected:        ")} ${totalLines}`);
+  console.log(`  ${paint(c.bold, "Severity breakdown:    ")} ${paint(c.red, `🔴 ${highCount} high`)}  ${paint(c.yellow, `🟡 ${medCount} medium`)}  ${paint(c.green, `🟢 ${lowCount} low`)}`);
+  if (opts.dryRun) {
+    console.log(paint(c.cyan + c.bold, `\n  🧪 Dry run — no files were changed.\n`));
+  }
   console.log();
 }
 
@@ -344,6 +370,7 @@ function renderJson(findings, meta) {
       startLine: block.startLine,
       endLine: block.endLine,
       lineCount: block.endLine - block.startLine + 1,
+      severity: getSeverity(block).label.replace(/[🔴🟡🟢] /, "").toLowerCase(),
       code: block.lines.map(l => l.raw).join("\n"),
     }));
   }
@@ -360,6 +387,16 @@ function renderReport(findings, meta) {
     (s, blocks) => s + blocks.reduce((ss, b) => ss + (b.endLine - b.startLine + 1), 0), 0
   );
 
+  let highCount = 0, medCount = 0, lowCount = 0;
+  for (const blocks of Object.values(findings)) {
+    for (const block of blocks) {
+      const sev = getSeverity(block);
+      if (sev === SEVERITY.HIGH) highCount++;
+      else if (sev === SEVERITY.MEDIUM) medCount++;
+      else lowCount++;
+    }
+  }
+
   const lines = [
     "# 🧹 Comment Cleaner Report", "",
     `> **Generated:** ${now}  `,
@@ -371,6 +408,9 @@ function renderReport(findings, meta) {
     `| Files with commented code | ${fileCount} |`,
     `| Commented-out blocks | ${totalBlocks} |`,
     `| Lines of commented code | ${totalLines} |`,
+    `| 🔴 High severity (10+ lines) | ${highCount} |`,
+    `| 🟡 Medium severity (4–9 lines) | ${medCount} |`,
+    `| 🟢 Low severity (1–3 lines) | ${lowCount} |`,
     "", "---", "", "## Findings", "",
   ];
 
@@ -384,7 +424,8 @@ function renderReport(findings, meta) {
         const range = block.startLine === block.endLine
           ? `Line ${block.startLine}`
           : `Lines ${block.startLine}–${block.endLine}`;
-        lines.push(`**${range}** — ${block.lines.length} line(s)`);
+        const sev = getSeverity(block);
+        lines.push(`**${range}** — ${block.lines.length} line(s) — ${sev.label}`);
         lines.push("```");
         for (const l of block.lines) lines.push(l.raw);
         lines.push("```");
@@ -398,6 +439,130 @@ function renderReport(findings, meta) {
   return lines.join("\n");
 }
 
+// ─── HTML report ──────────────────────────────────────────────────────────────
+function renderHtml(findings, meta) {
+  const now = new Date().toLocaleString();
+  const fileCount = Object.keys(findings).length;
+  const totalBlocks = Object.values(findings).reduce((s, b) => s + b.length, 0);
+  const totalLines = Object.values(findings).reduce(
+    (s, blocks) => s + blocks.reduce((ss, b) => ss + (b.endLine - b.startLine + 1), 0), 0
+  );
+
+  let highCount = 0, medCount = 0, lowCount = 0;
+  for (const blocks of Object.values(findings)) {
+    for (const block of blocks) {
+      const sev = getSeverity(block);
+      if (sev === SEVERITY.HIGH) highCount++;
+      else if (sev === SEVERITY.MEDIUM) medCount++;
+      else lowCount++;
+    }
+  }
+
+  const escape = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  let filesSections = "";
+  for (const [filePath, blocks] of Object.entries(findings)) {
+    let blockHtml = "";
+    for (const block of blocks) {
+      const sev = getSeverity(block);
+      const sevClass = sev === SEVERITY.HIGH ? "high" : sev === SEVERITY.MEDIUM ? "medium" : "low";
+      const range = block.startLine === block.endLine
+        ? `Line ${block.startLine}`
+        : `Lines ${block.startLine}–${block.endLine}`;
+      const code = block.lines.map(l => escape(l.raw)).join("\n");
+      blockHtml += `
+        <div class="block ${sevClass}">
+          <div class="block-header">
+            <span class="range">${range}</span>
+            <span class="severity-badge ${sevClass}">${sev.label}</span>
+            <span class="line-count">${block.lines.length} line(s)</span>
+          </div>
+          <pre><code>${code}</code></pre>
+        </div>`;
+    }
+    filesSections += `
+      <div class="file-card">
+        <div class="file-header">
+          <span class="file-icon">📄</span>
+          <span class="file-path">${escape(filePath)}</span>
+          <span class="block-count">${blocks.length} block${blocks.length > 1 ? "s" : ""}</span>
+        </div>
+        <div class="blocks">${blockHtml}</div>
+      </div>`;
+  }
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🧹 Comment Cleaner Report</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f0f0f; color: #e0e0e0; min-height: 100vh; }
+    header { background: linear-gradient(135deg, #1a1a2e, #16213e); padding: 2rem; border-bottom: 1px solid #333; }
+    header h1 { font-size: 2rem; font-weight: 700; color: #fff; }
+    header p { color: #888; margin-top: 0.4rem; font-size: 0.9rem; }
+    .container { max-width: 1100px; margin: 0 auto; padding: 2rem; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+    .stat-card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 10px; padding: 1.2rem; text-align: center; }
+    .stat-card .value { font-size: 2rem; font-weight: 700; color: #fff; }
+    .stat-card .label { font-size: 0.8rem; color: #666; margin-top: 0.3rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .severity-row { display: flex; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap; }
+    .sev-pill { padding: 0.5rem 1.2rem; border-radius: 20px; font-weight: 600; font-size: 0.9rem; }
+    .sev-pill.high   { background: #3d1515; color: #ff6b6b; border: 1px solid #ff6b6b44; }
+    .sev-pill.medium { background: #3d2e00; color: #ffd93d; border: 1px solid #ffd93d44; }
+    .sev-pill.low    { background: #0d3d1e; color: #6bcb77; border: 1px solid #6bcb7744; }
+    .file-card { background: #141414; border: 1px solid #2a2a2a; border-radius: 12px; margin-bottom: 1.5rem; overflow: hidden; }
+    .file-header { display: flex; align-items: center; gap: 0.8rem; padding: 1rem 1.2rem; background: #1c1c1c; border-bottom: 1px solid #2a2a2a; flex-wrap: wrap; }
+    .file-path { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9rem; color: #a0cfff; flex: 1; }
+    .block-count { background: #2a2a2a; color: #888; font-size: 0.75rem; padding: 0.2rem 0.6rem; border-radius: 10px; }
+    .block { margin: 1rem; border-radius: 8px; overflow: hidden; border: 1px solid #2a2a2a; }
+    .block.high   { border-left: 4px solid #ff6b6b; }
+    .block.medium { border-left: 4px solid #ffd93d; }
+    .block.low    { border-left: 4px solid #6bcb77; }
+    .block-header { display: flex; align-items: center; gap: 0.8rem; padding: 0.6rem 1rem; background: #1a1a1a; font-size: 0.82rem; flex-wrap: wrap; }
+    .range { color: #888; font-family: monospace; }
+    .line-count { color: #555; font-size: 0.75rem; }
+    .severity-badge { font-size: 0.75rem; font-weight: 600; padding: 0.15rem 0.5rem; border-radius: 6px; }
+    .severity-badge.high   { background: #3d1515; color: #ff6b6b; }
+    .severity-badge.medium { background: #3d2e00; color: #ffd93d; }
+    .severity-badge.low    { background: #0d3d1e; color: #6bcb77; }
+    pre { background: #0a0a0a; padding: 1rem; overflow-x: auto; }
+    code { font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; font-size: 0.82rem; color: #ff8080; line-height: 1.6; }
+    .empty { text-align: center; padding: 4rem; color: #555; font-size: 1.1rem; }
+    footer { text-align: center; padding: 2rem; color: #333; font-size: 0.8rem; border-top: 1px solid #1a1a1a; margin-top: 2rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>🧹 Comment Cleaner Report</h1>
+      <p>Generated: ${escape(now)} · Scanned: <code>${escape(meta.targetPath)}</code></p>
+    </div>
+  </header>
+  <div class="container">
+    <div class="stats">
+      <div class="stat-card"><div class="value">${meta.totalFiles}</div><div class="label">Files Scanned</div></div>
+      <div class="stat-card"><div class="value">${fileCount}</div><div class="label">Files with Issues</div></div>
+      <div class="stat-card"><div class="value">${totalBlocks}</div><div class="label">Dead Blocks</div></div>
+      <div class="stat-card"><div class="value">${totalLines}</div><div class="label">Lines Affected</div></div>
+    </div>
+    <div class="severity-row">
+      <div class="sev-pill high">🔴 ${highCount} High (10+ lines)</div>
+      <div class="sev-pill medium">🟡 ${medCount} Medium (4–9 lines)</div>
+      <div class="sev-pill low">🟢 ${lowCount} Low (1–3 lines)</div>
+    </div>
+    ${fileCount === 0
+      ? `<div class="empty">✅ No commented-out code detected. Your codebase is clean!</div>`
+      : filesSections
+    }
+  </div>
+  <footer>Generated by <strong>comment-cleaner</strong> · <a href="https://npmjs.com/package/@youngemmy/comment-cleaner" style="color:#555">npmjs.com/package/@youngemmy/comment-cleaner</a></footer>
+</body>
+</html>`;
+}
+
 // ─── Watch mode ───────────────────────────────────────────────────────────────
 function runWatch(targetPath, opts) {
   console.log(paint(c.magenta + c.bold, `\n👀 Watch mode active — monitoring for changes...`));
@@ -409,23 +574,17 @@ function runWatch(targetPath, opts) {
     const ext = path.extname(filePath).toLowerCase();
     const lang = LANGUAGES[ext];
     if (!lang) return;
-
     let blocks;
     try { blocks = parseFile(filePath, lang); } catch { return; }
-
     const relPath = path.relative(process.cwd(), filePath);
-
     if (blocks.length > 0) {
       const timestamp = new Date().toLocaleTimeString();
-      console.log(paint(c.yellow + c.bold, `\n⚠️  [${timestamp}] Commented-out code detected in: ${relPath}`));
+      console.log(paint(c.yellow + c.bold, `\n⚠️  [${timestamp}] Commented-out code in: ${relPath}`));
       for (const block of blocks) {
-        const range = block.startLine === block.endLine
-          ? `line ${block.startLine}`
-          : `lines ${block.startLine}–${block.endLine}`;
-        console.log(paint(c.dim, `   ${range}:`));
-        for (const l of block.lines) {
-          console.log(paint(c.red, `     ${l.raw.trim()}`));
-        }
+        const sev = getSeverity(block);
+        const range = block.startLine === block.endLine ? `line ${block.startLine}` : `lines ${block.startLine}–${block.endLine}`;
+        console.log(paint(sev.color + c.bold, `   ${sev.label} `) + paint(c.dim, `${range}:`));
+        for (const l of block.lines) console.log(paint(c.red, `     ${l.raw.trim()}`));
       }
       console.log(paint(c.dim, `\n   Run: comment-cleaner ${relPath} --fix  to remove\n`));
     }
@@ -433,18 +592,13 @@ function runWatch(targetPath, opts) {
 
   function watchDir(dirPath) {
     const ignore = new Set([...DEFAULT_IGNORE, ...opts.extraIgnore]);
-
     fs.watch(dirPath, { recursive: true }, (eventType, filename) => {
       if (!filename) return;
-
       const fullPath = path.join(dirPath, filename);
       const parts = fullPath.split(path.sep);
       if (parts.some(p => ignore.has(p))) return;
-
       const ext = path.extname(filename).toLowerCase();
       if (!opts.extensions.has(ext)) return;
-
-      // Debounce — wait 300ms before scanning to avoid double triggers
       clearTimeout(debounceMap[fullPath]);
       debounceMap[fullPath] = setTimeout(() => {
         if (fs.existsSync(fullPath)) scanFile(fullPath);
@@ -452,7 +606,6 @@ function runWatch(targetPath, opts) {
     });
   }
 
-  // Do an initial full scan on start
   const files = fs.statSync(targetPath).isFile()
     ? [targetPath]
     : walkDir(targetPath, opts.extensions, opts.extraIgnore);
@@ -475,7 +628,6 @@ function runWatch(targetPath, opts) {
     console.log(paint(c.green, `✅  No issues found on startup. Watching for new changes...\n`));
   }
 
-  // Start watching
   if (fs.statSync(targetPath).isFile()) {
     fs.watch(targetPath, () => {
       clearTimeout(debounceMap[targetPath]);
@@ -497,9 +649,12 @@ function parseArgs(argv) {
     extraIgnore: [],
     noPreview: false,
     fix: false,
+    dryRun: false,
     watch: false,
     json: false,
     jsonPath: null,
+    html: false,
+    htmlPath: null,
     help: false,
   };
 
@@ -508,8 +663,10 @@ function parseArgs(argv) {
     if (a === "-h" || a === "--help") { opts.help = true; }
     else if (a === "-r" || a === "--report") { opts.report = true; if (args[i + 1] && !args[i + 1].startsWith("-")) opts.reportPath = args[++i]; }
     else if (a === "-f" || a === "--fix") { opts.fix = true; }
+    else if (a === "--dry-run") { opts.dryRun = true; }
     else if (a === "-w" || a === "--watch") { opts.watch = true; }
     else if (a === "--json") { opts.json = true; if (args[i + 1] && !args[i + 1].startsWith("-")) opts.jsonPath = args[++i]; }
+    else if (a === "--html") { opts.html = true; if (args[i + 1] && !args[i + 1].startsWith("-")) opts.htmlPath = args[++i]; }
     else if (a === "-e" || a === "--ext") { const raw = args[++i] || ""; opts.extensions = new Set(raw.split(",").map(e => e.startsWith(".") ? e.toLowerCase() : "." + e.toLowerCase())); }
     else if (a === "--ignore") { opts.extraIgnore = (args[++i] || "").split(",").map(s => s.trim()); }
     else if (a === "--no-preview") { opts.noPreview = true; }
@@ -530,28 +687,36 @@ ${paint(c.bold, "Options:")}
   -h, --help              Show this help
   -r, --report [file]     Save findings as a Markdown report
   -f, --fix               Auto-remove all commented-out code
-  -w, --watch             Watch mode — alert on new commented-out code in real time
-  --json [file]           Output results as JSON (to stdout or file)
+      --dry-run           Preview what --fix would remove (no changes made)
+  -w, --watch             Watch mode — real time alerts as you code
+      --json [file]       Output results as JSON (stdout or file)
+      --html [file]       Generate a beautiful HTML report
   -e, --ext .js,.ts       Only scan specific extensions
-  --ignore dir1,dir2      Extra directories to skip
-  --no-preview            Suppress terminal output
+      --ignore dir1,dir2  Extra directories to skip
+      --no-preview        Suppress terminal output
+
+${paint(c.bold, "@keep annotation:")}
+  Add @keep to any comment to permanently exclude it from detection:
+  ${paint(c.dim, "// @keep const OLD_API = 'https://legacy.api.com';")}
+
+${paint(c.bold, "Severity levels:")}
+  🔴 HIGH    — 10+ lines of commented-out code
+  🟡 MEDIUM  — 4–9 lines
+  🟢 LOW     — 1–3 lines
 
 ${paint(c.bold, "Supported languages:")}
   JS/TS/JSX/TSX · Python · CSS/SCSS/Sass/Less
   Go · Java · Kotlin · Rust · Ruby · PHP · C/C++ · Swift
 
-${paint(c.bold, "Config file (.commentcleanerrc):")}
-  { "extensions": [".ts",".js"], "ignore": ["tmp"], "report": true }
-
 ${paint(c.bold, "Examples:")}
-  comment-cleaner ./src                  Preview findings
+  comment-cleaner ./src                  Preview findings with severity
+  comment-cleaner ./src --dry-run        Show what --fix would remove
   comment-cleaner ./src --fix            Remove all dead comments
   comment-cleaner ./src --watch          Watch for new commented code
+  comment-cleaner ./src --html           Open report in browser
+  comment-cleaner ./src --html out.html  Save HTML report to file
   comment-cleaner ./src --json           Print JSON to stdout
-  comment-cleaner ./src --json out.json  Save JSON to file
   comment-cleaner ./src -r               Save Markdown report
-  comment-cleaner ./src --fix -r         Fix + save report of what was removed
-  comment-cleaner . -e .go,.rs           Only Go and Rust files
 `);
 }
 
@@ -579,18 +744,15 @@ function main() {
   console.log(paint(c.blue, `\n🔍 Scanning: ${paint(c.bold + c.blue, targetPath)}`));
   console.log(paint(c.dim, `   Extensions : ${[...opts.extensions].join("  ")}`));
   if (opts.fix) console.log(paint(c.yellow, `   Mode       : --fix`));
+  if (opts.dryRun) console.log(paint(c.cyan, `   Mode       : --dry-run (no files will be changed)`));
   if (opts.watch) console.log(paint(c.magenta, `   Mode       : --watch`));
   if (opts.json) console.log(paint(c.cyan, `   Mode       : --json`));
+  if (opts.html) console.log(paint(c.cyan, `   Mode       : --html`));
   if (opts.extraIgnore.length) console.log(paint(c.dim, `   Extra ignore: ${opts.extraIgnore.join(", ")}`));
   console.log();
 
-  // ── Watch mode (takes over, never returns) ────────────────────────────────
-  if (opts.watch) {
-    runWatch(targetPath, opts);
-    return;
-  }
+  if (opts.watch) { runWatch(targetPath, opts); return; }
 
-  // ── Normal scan ───────────────────────────────────────────────────────────
   const isFile = fs.statSync(targetPath).isFile();
   const files = isFile ? [targetPath] : walkDir(targetPath, opts.extensions, opts.extraIgnore);
   console.log(paint(c.dim, `  Found ${files.length} file(s) to analyse...\n`));
@@ -612,10 +774,9 @@ function main() {
     extensions: opts.extensions,
   };
 
-  // Preview
-  if (!opts.noPreview && !opts.json) printPreview(findings, meta);
+  if (!opts.noPreview && !opts.json) printPreview(findings, meta, opts);
 
-  // JSON output
+  // JSON
   if (opts.json) {
     const jsonStr = renderJson(findings, meta);
     if (opts.jsonPath) {
@@ -626,8 +787,17 @@ function main() {
     }
   }
 
-  // Fix
-  if (opts.fix) {
+  // HTML report
+  if (opts.html) {
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const htmlPath = opts.htmlPath || `comment-cleaner-${timestamp}.html`;
+    fs.writeFileSync(htmlPath, renderHtml(findings, meta), "utf8");
+    console.log(paint(c.green + c.bold, `🌐 HTML report saved → ${htmlPath}\n`));
+    console.log(paint(c.dim, `   Open it in your browser to view the full report.\n`));
+  }
+
+  // Fix (skipped in dry-run)
+  if (opts.fix && !opts.dryRun) {
     const fileCount = Object.keys(findings).length;
     if (fileCount === 0) {
       console.log(paint(c.green, "✅  Nothing to fix — codebase is already clean!\n"));
@@ -653,11 +823,11 @@ function main() {
     const reportPath = opts.reportPath || `comment-cleaner-${timestamp}.md`;
     fs.writeFileSync(reportPath, renderReport(findings, meta), "utf8");
     console.log(paint(c.green + c.bold, `📊 Report saved → ${reportPath}\n`));
-  } else if (!opts.fix && !opts.json) {
-    console.log(paint(c.dim, "  💡 --fix to remove  |  -r for report  |  --json for JSON  |  --watch to monitor\n"));
+  } else if (!opts.fix && !opts.json && !opts.html && !opts.dryRun) {
+    console.log(paint(c.dim, "  💡 --fix · --dry-run · -r · --html · --json · --watch\n"));
   }
 
-  if (!opts.fix && Object.keys(findings).length > 0) process.exitCode = 1;
+  if (!opts.fix && !opts.dryRun && Object.keys(findings).length > 0) process.exitCode = 1;
 }
 
 main();

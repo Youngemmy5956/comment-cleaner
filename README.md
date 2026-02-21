@@ -12,12 +12,16 @@
 
 - 🔍 **Preview mode** — see all commented-out code blocks with file path and line numbers
 - 🔧 **Fix mode** — automatically remove all detected commented-out code with one command
+- 🎛️ **Interactive mode** — step through each block and choose delete, keep, or skip
 - 🧪 **Dry-run mode** — preview exactly what `--fix` would remove before committing
 - 👀 **Watch mode** — monitor your project in real time and alert on new commented-out code as you type
-- 📊 **Markdown report** — export a clean report, perfect for code reviews
+- 📈 **Stats mode** — view your scan history and trend over time
+- 🚦 **Threshold mode** — fail CI automatically if too many blocks are found
+- 📁 **Output dir** — save all reports (HTML, JSON, MD) to one folder in a single command
 - 🌐 **HTML report** — beautiful dark-themed visual report you can open in any browser
+- 📊 **Markdown report** — clean report, perfect for code reviews
 - 📦 **JSON output** — machine-readable output for CI pipelines and editor integrations
-- 🏷️ **Severity levels** — every block is ranked 🔴 High · 🟡 Medium · 🟢 Low
+- 🏷️ **Severity levels** — every block ranked 🔴 High · 🟡 Medium · 🟢 Low
 - 🔒 **@keep annotation** — permanently exclude any comment from detection
 - ⚙️ **Config file** — save your settings per project in `.commentcleanerrc`
 - 🤖 **GitHub Action** — run automatically on every pull request
@@ -56,23 +60,29 @@ comment-cleaner ./src --dry-run
 # Auto-remove all commented-out code
 comment-cleaner ./src --fix
 
+# Step through each block interactively
+comment-cleaner ./src -i
+
 # Fix and save a report of what was removed
 comment-cleaner ./src --fix -r
 
 # Watch mode — alerts you in real time as you code
 comment-cleaner ./src --watch
 
+# Show scan history and trend over time
+comment-cleaner --stats
+
+# Fail CI if more than 5 commented blocks found
+comment-cleaner ./src --threshold 5
+
+# Save all reports (HTML + JSON + MD) to a folder
+comment-cleaner ./src --output-dir ./reports
+
 # Generate a beautiful HTML report
 comment-cleaner ./src --html
 
-# Save HTML report to a specific file
-comment-cleaner ./src --html report.html
-
-# Output results as JSON to stdout
+# Output results as JSON
 comment-cleaner ./src --json
-
-# Save JSON to a file
-comment-cleaner ./src --json results.json
 
 # Save a Markdown report
 comment-cleaner ./src -r
@@ -80,7 +90,7 @@ comment-cleaner ./src -r
 # Only scan Go and Rust files
 comment-cleaner . -e .go,.rs
 
-# Report only, no terminal output (great for CI)
+# Silent scan for CI
 comment-cleaner ./src --no-preview -r audit.md
 ```
 
@@ -91,15 +101,104 @@ comment-cleaner ./src --no-preview -r audit.md
 | Flag | Alias | Description |
 |------|-------|-------------|
 | `--fix` | `-f` | Automatically remove all detected commented-out code |
+| `--interactive` | `-i` | Step through each block — choose delete, keep, or skip |
 | `--dry-run` | | Show what `--fix` would remove without making any changes |
 | `--watch` | `-w` | Watch mode — alert on new commented-out code in real time |
-| `--html [file]` | | Generate a beautiful HTML report (default: `comment-cleaner-YYYY-MM-DD.html`) |
-| `--json [file]` | | Output results as JSON. Prints to stdout or saves to file |
+| `--stats` | | Show scan history and trend over time |
+| `--threshold <n>` | | Exit with error code if commented blocks exceed n (for CI) |
+| `--output-dir <dir>` | | Save all reports (HTML, JSON, MD) to a folder at once |
+| `--html [file]` | | Generate a beautiful HTML report |
+| `--json [file]` | | Output results as JSON — stdout or file |
 | `--report [file]` | `-r` | Save findings as a Markdown report |
 | `--ext .js,.ts` | `-e` | Only scan specific extensions (comma-separated) |
 | `--ignore dir1,dir2` | | Extra directories to skip on top of defaults |
 | `--no-preview` | | Suppress terminal output |
 | `--help` | `-h` | Show help |
+
+---
+
+## 🎛️ Interactive Mode
+
+Step through every flagged block one by one and decide what to do with each — no more all-or-nothing deletes.
+
+```bash
+comment-cleaner ./src -i
+```
+
+```
+🎛️  Interactive mode — review each block one by one
+
+📄 src/api.ts
+  ┌─ lines 4–5 ─────────────────────── 🟢 LOW
+  │    4    // const OLD_CACHE = new Map<string, User>();
+  │    5    // if (OLD_CACHE.has(id)) return OLD_CACHE.get(id);
+  └────────────────────────────────────────────────────
+
+  → [d] delete  [k] keep  [s] skip file  [q] quit:
+```
+
+---
+
+## 📈 Stats Mode
+
+Track how your codebase is improving over time. Every scan is recorded automatically.
+
+```bash
+comment-cleaner --stats
+```
+
+```
+📈 comment-cleaner — Scan History
+
+  Last 10 scans:
+
+  Date                  Path                          Blocks  Lines
+  ──────────────────────────────────────────────────────────────────
+  2/21/2026, 10:00 AM   src                               33      36
+  2/20/2026,  9:30 AM   src                               21      24
+  2/19/2026,  8:15 AM   src                                5       6
+
+  📉 Trend: DOWN 28 blocks since first scan — great progress! 🎉
+```
+
+---
+
+## 🚦 Threshold Mode
+
+Perfect for CI pipelines — fail the build automatically if too many commented-out blocks are found.
+
+```bash
+comment-cleaner . --threshold 5
+```
+
+```
+✅  Threshold passed: 3 blocks found, limit is 5    → exit code 0
+❌  Threshold exceeded: 8 blocks found, limit is 5  → exit code 1
+```
+
+Add it to your GitHub Action:
+
+```yaml
+- run: comment-cleaner . --threshold 10
+```
+
+---
+
+## 📁 Output Dir
+
+Save all three reports at once with a single command.
+
+```bash
+comment-cleaner ./src --output-dir ./reports
+```
+
+Creates:
+```
+reports/
+├── comment-cleaner.html
+├── comment-cleaner.json
+└── comment-cleaner.md
+```
 
 ---
 
@@ -111,20 +210,6 @@ See exactly what `--fix` would remove before you commit to it. Nothing is change
 comment-cleaner ./src --dry-run
 ```
 
-```
-📄 src/api.ts  (2 blocks)
-  ┌─ lines 4–5 ─────────────────────── 🟢 LOW
-  │    4    // const OLD_CACHE = new Map<string, User>();
-  │    5    // if (OLD_CACHE.has(id)) return OLD_CACHE.get(id);
-  └────────────────────────────────────────────────────
-  ┌─ lines 9–19 ────────────────────── 🔴 HIGH
-  │    9    // const BASE = 'https://old.api.com';
-  ...
-  └────────────────────────────────────────────────────
-
-  🧪 Dry run — no files were changed.
-```
-
 ---
 
 ## 🔒 @keep Annotation
@@ -132,7 +217,7 @@ comment-cleaner ./src --dry-run
 Add `@keep` to any comment you want the tool to **permanently ignore**, even if it looks like dead code.
 
 ```js
-// @keep const LEGACY_URL = 'https://legacy.api.com'; // needed for migration script
+// @keep const LEGACY_URL = 'https://legacy.api.com'; // needed for migration
 // @keep const OLD_TIMEOUT = 3000;
 ```
 
@@ -140,65 +225,48 @@ Add `@keep` to any comment you want the tool to **permanently ignore**, even if 
 # @keep old_hash = hashlib.md5(password.encode()).hexdigest()
 ```
 
-These lines will never be flagged, even when running `--fix`.
+These lines will never be flagged, even with `--fix`.
 
 ---
 
 ## 🏷️ Severity Levels
 
-Every detected block is automatically ranked by size so you know where to focus first.
+Every detected block is automatically ranked so you know where to focus first.
 
 | Level | Lines | Meaning |
 |-------|-------|---------|
-| 🔴 HIGH | 10+ lines | Large dead block — delete it first |
+| 🔴 HIGH | 10+ lines | Large dead block — clean up first |
 | 🟡 MEDIUM | 4–9 lines | Medium dead block |
 | 🟢 LOW | 1–3 lines | Small dead comment |
 
-Severity is shown in the terminal, Markdown report, HTML report, and JSON output.
+Severity appears in the terminal, HTML report, Markdown report, and JSON output.
 
 ---
 
 ## 👀 Watch Mode
 
-Monitors your project in the background and instantly alerts you whenever new commented-out code is detected — without running the tool manually.
+Monitors your project in the background and instantly alerts you when new commented-out code is saved.
 
 ```bash
 comment-cleaner ./src --watch
-```
-
-```
-👀 Watch mode active — monitoring for changes...
-   Press Ctrl+C to stop.
-
-✅  No issues found on startup. Watching for new changes...
-
-⚠️  [14:32:01] Commented-out code in: src/api.ts
-   🔴 HIGH lines 12–14:
-     // const OLD_BASE = 'https://old.api.com';
-     // const client = axios.create({ baseURL: OLD_BASE });
-     // export default client;
-
-   Run: comment-cleaner src/api.ts --fix  to remove
 ```
 
 ---
 
 ## 🌐 HTML Report
 
-Generate a beautiful dark-themed visual report you can open in any browser — great for sharing with your team.
+A beautiful dark-themed visual report, perfect for sharing with your team.
 
 ```bash
 comment-cleaner ./src --html
 comment-cleaner ./src --html report.html
 ```
 
-The report includes the full summary, severity breakdown, and all flagged blocks grouped by file.
-
 ---
 
 ## 📦 JSON Output
 
-Use `--json` for machine-readable output in CI pipelines, editor plugins, or custom scripts.
+Machine-readable output for CI pipelines, editor plugins, or custom scripts.
 
 ```bash
 comment-cleaner ./src --json
@@ -206,7 +274,7 @@ comment-cleaner ./src --json
 
 ```json
 {
-  "generatedAt": "2026-02-18T10:00:00.000Z",
+  "generatedAt": "2026-02-21T10:00:00.000Z",
   "scannedPath": "src",
   "summary": {
     "filesScanned": 42,
@@ -232,14 +300,15 @@ comment-cleaner ./src --json
 
 ## ⚙️ Config File
 
-Create a `.commentcleanerrc` in your project root to save settings. CLI flags always override config values.
+Create a `.commentcleanerrc` in your project root. CLI flags always override config values.
 
 ```json
 {
   "extensions": [".js", ".jsx", ".ts", ".tsx", ".py", ".css", ".scss"],
   "ignore": ["tmp", "fixtures", "__tests__", "migrations"],
   "report": true,
-  "reportPath": "comment-cleaner-report.md"
+  "reportPath": "comment-cleaner-report.md",
+  "threshold": 10
 }
 ```
 
@@ -247,7 +316,7 @@ Create a `.commentcleanerrc` in your project root to save settings. CLI flags al
 
 ## 🤖 GitHub Action
 
-Create `.github/workflows/comment-cleaner.yml` to scan on every pull request:
+Create `.github/workflows/comment-cleaner.yml`:
 
 ```yaml
 name: 🧹 Comment Cleaner
@@ -265,12 +334,12 @@ jobs:
         with:
           node-version: '18'
       - run: npm install -g @youngemmy/comment-cleaner
-      - run: comment-cleaner . --no-preview -r comment-cleaner-report.md || true
+      - run: comment-cleaner . --threshold 20 --output-dir reports || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: comment-cleaner-report
-          path: comment-cleaner-report.md
+          name: comment-cleaner-reports
+          path: reports/
 ```
 
 ---
@@ -292,8 +361,6 @@ jobs:
 | Swift | `.swift` |
 | CSS | `.css` |
 | SCSS / Sass / Less | `.scss` `.sass` `.less` |
-
-Use `-e` to scan any other extension you need.
 
 ---
 
@@ -334,13 +401,14 @@ Only flags **actual dead code** — not comments that explain what your code doe
 
 ## 💡 Tips
 
-- Always **preview first** or use `--dry-run` before using `--fix`
+- Always **preview first** or use `--dry-run` before `--fix`
+- Use `-i` when you want control over what gets deleted
 - Use `--watch` during development to catch dead comments as you write them
-- Use `--fix -r` to remove code and keep a record of what was deleted
-- Use `--html` to share a visual report with your team
-- Use `--json` to pipe results into other tools or scripts
+- Use `--stats` to track your cleanup progress over time
+- Use `--threshold` in CI to enforce clean code standards
+- Use `--output-dir` to save all reports in one shot
 - Use `@keep` to protect comments that look like dead code but are intentional
-- Use `--no-preview -r` in CI to generate a silent report artifact
+- Use `--fix -r` to remove code and keep a record of what was deleted
 
 ---
 

@@ -7,6 +7,8 @@
 
 const fs = require("fs");
 const path = require("path");
+const readline = require("readline");
+const os = require("os");
 
 // ─── ANSI Colors ─────────────────────────────────────────────────────────────
 const c = {
@@ -63,6 +65,84 @@ function getSeverity(block) {
   if (lineCount >= SEVERITY.HIGH.minLines) return SEVERITY.HIGH;
   if (lineCount >= SEVERITY.MEDIUM.minLines) return SEVERITY.MEDIUM;
   return SEVERITY.LOW;
+}
+
+// ─── Stats store (~/.comment-cleaner-stats.json) ──────────────────────────────
+const STATS_FILE = path.join(os.homedir(), ".comment-cleaner-stats.json");
+
+function loadStats() {
+  try {
+    if (fs.existsSync(STATS_FILE)) return JSON.parse(fs.readFileSync(STATS_FILE, "utf8"));
+  } catch { }
+  return { runs: [] };
+}
+
+function saveStats(stats) {
+  try { fs.writeFileSync(STATS_FILE, JSON.stringify(stats, null, 2), "utf8"); } catch { }
+}
+
+function recordRun(meta, findings) {
+  const stats = loadStats();
+  const totalBlocks = Object.values(findings).reduce((s, b) => s + b.length, 0);
+  const totalLines = Object.values(findings).reduce(
+    (s, blocks) => s + blocks.reduce((ss, b) => ss + (b.endLine - b.startLine + 1), 0), 0
+  );
+  stats.runs.push({
+    date: new Date().toISOString(),
+    path: meta.targetPath,
+    filesScanned: meta.totalFiles,
+    filesWithIssues: Object.keys(findings).length,
+    commentedBlocks: totalBlocks,
+    linesAffected: totalLines,
+  });
+  // Keep last 50 runs
+  if (stats.runs.length > 50) stats.runs = stats.runs.slice(-50);
+  saveStats(stats);
+}
+
+function printStats() {
+  const stats = loadStats();
+  if (!stats.runs.length) {
+    console.log(paint(c.yellow, "\n  No scan history yet. Run comment-cleaner on a project first.\n"));
+    return;
+  }
+
+  console.log(paint(c.cyan + c.bold, "\n📈 comment-cleaner — Scan History\n"));
+
+  // Last 10 runs
+  const recent = stats.runs.slice(-10).reverse();
+  console.log(paint(c.bold, "  Last 10 scans:\n"));
+  console.log(paint(c.dim, "  Date                  Path                          Blocks  Lines"));
+  console.log(paint(c.dim, "  " + "─".repeat(70)));
+
+  for (const run of recent) {
+    const date = new Date(run.date).toLocaleString();
+    const p = run.path.slice(0, 28).padEnd(28);
+    const blocks = String(run.commentedBlocks).padStart(6);
+    const lines = String(run.linesAffected).padStart(6);
+    const col = run.commentedBlocks === 0 ? c.green : run.commentedBlocks > 10 ? c.red : c.yellow;
+    console.log(`  ${paint(c.dim, date.slice(0, 20).padEnd(22))} ${paint(c.white, p)} ${paint(col, blocks)} ${paint(c.dim, lines)}`);
+  }
+
+  // Trend
+  if (stats.runs.length >= 2) {
+    const first = stats.runs[0];
+    const last = stats.runs[stats.runs.length - 1];
+    const diff = last.commentedBlocks - first.commentedBlocks;
+    console.log();
+    if (diff < 0) {
+      console.log(paint(c.green + c.bold, `  📉 Trend: DOWN ${Math.abs(diff)} blocks since first scan — great progress! 🎉`));
+    } else if (diff > 0) {
+      console.log(paint(c.red + c.bold, `  📈 Trend: UP ${diff} blocks since first scan — time to clean up!`));
+    } else {
+      console.log(paint(c.cyan, `  ➡️  Trend: No change since first scan.`));
+    }
+  }
+
+  // All-time totals
+  const totalFixed = stats.runs.reduce((s, r) => s + r.commentedBlocks, 0);
+  console.log(paint(c.dim, `\n  Total scans recorded: ${stats.runs.length}`));
+  console.log(paint(c.dim, `  Stats file: ${STATS_FILE}\n`));
 }
 
 // ─── Code detection heuristics ───────────────────────────────────────────────
@@ -128,8 +208,6 @@ const PROSE_SIGNALS = [
 
 const MULTI_LINE_THRESHOLD = 2;
 
-// ─── @keep annotation ─────────────────────────────────────────────────────────
-// If a comment contains @keep, it is permanently ignored by the tool
 function hasKeepAnnotation(lines) {
   return lines.some(l => /@keep\b/i.test(l.raw || l));
 }
@@ -190,6 +268,7 @@ function applyConfig(opts, config) {
   if (config.report !== undefined && !opts.report) opts.report = config.report;
   if (config.reportPath && !opts.reportPath) opts.reportPath = config.reportPath;
   if (config.fix !== undefined && !opts.fix) opts.fix = config.fix;
+  if (config.threshold !== undefined && opts.threshold === null) opts.threshold = config.threshold;
   return opts;
 }
 
@@ -206,10 +285,7 @@ function parseFile(filePath, lang) {
     if (lang.single && trimmed.startsWith(lang.single)) {
       if (trimmed.startsWith("///")) { i++; continue; }
       const text = trimmed.slice(lang.single.length).trim();
-
-      // Check for @keep on this single line
       if (/@keep\b/i.test(text)) { i++; continue; }
-
       if (looksLikeCode(text)) {
         const group = [{ lineNum: i + 1, raw: line }];
         let j = i + 1;
@@ -222,7 +298,6 @@ function parseFile(filePath, lang) {
           }
           break;
         }
-        // Skip the whole block if any line has @keep
         if (!hasKeepAnnotation(group)) {
           blocks.push({ startLine: i + 1, endLine: group[group.length - 1].lineNum, lines: group });
         }
@@ -241,9 +316,7 @@ function parseFile(filePath, lang) {
         if (lines[j].includes(lang.mlEnd)) closed = true;
         j++;
       }
-      // Skip if @keep anywhere in the block
       if (hasKeepAnnotation(group)) { i = j; continue; }
-
       const innerLines = group.map(l => l.raw.replace(/^[\s/*#"=]+/, "").replace(/[\s/*"=]+$/, ""));
       if (looksLikeCodeBlock(innerLines)) {
         blocks.push({ startLine: i + 1, endLine: group[group.length - 1].lineNum, lines: group });
@@ -266,6 +339,59 @@ function fixFile(filePath, blocks) {
     for (let i = block.startLine - 1; i < block.endLine; i++) linesToRemove.add(i);
   }
   fs.writeFileSync(filePath, lines.filter((_, idx) => !linesToRemove.has(idx)).join("\n"), "utf8");
+}
+
+// ─── Interactive mode ─────────────────────────────────────────────────────────
+async function runInteractive(findings) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q) => new Promise(res => rl.question(q, res));
+
+  console.log(paint(c.magenta + c.bold, "\n🎛️  Interactive mode — review each block one by one\n"));
+  console.log(paint(c.dim, "  Commands: [d] delete  [k] keep  [s] skip file  [q] quit\n"));
+
+  const toRemove = {}; // filePath -> Set of line indices to remove
+
+  for (const [relPath, blocks] of Object.entries(findings)) {
+    console.log(paint(c.yellow + c.bold, `\n📄 ${relPath}`));
+    let skipFile = false;
+
+    for (const block of blocks) {
+      if (skipFile) break;
+
+      const sev = getSeverity(block);
+      const range = block.startLine === block.endLine
+        ? `line ${block.startLine}`
+        : `lines ${block.startLine}–${block.endLine}`;
+
+      console.log(paint(c.dim, `\n  ┌─ ${range} ${"─".repeat(Math.max(0, 36 - range.length))} `) + paint(sev.color + c.bold, sev.label));
+      for (const l of block.lines) {
+        console.log(paint(c.dim, `  │ ${String(l.lineNum).padStart(4)}  `) + paint(c.red, l.raw));
+      }
+      console.log(paint(c.dim, `  └${"─".repeat(52)}`));
+
+      let answer = "";
+      while (!["d", "k", "s", "q"].includes(answer)) {
+        answer = (await ask(paint(c.cyan, "  → [d] delete  [k] keep  [s] skip file  [q] quit: "))).trim().toLowerCase();
+      }
+
+      if (answer === "q") {
+        console.log(paint(c.yellow, "\n  Quitting interactive mode.\n"));
+        rl.close();
+        return toRemove;
+      }
+      if (answer === "s") { skipFile = true; continue; }
+      if (answer === "d") {
+        if (!toRemove[relPath]) toRemove[relPath] = [];
+        toRemove[relPath].push(block);
+        console.log(paint(c.green, "  ✅ Marked for deletion"));
+      } else {
+        console.log(paint(c.dim, "  ⏭️  Kept"));
+      }
+    }
+  }
+
+  rl.close();
+  return toRemove;
 }
 
 // ─── Directory walker ─────────────────────────────────────────────────────────
@@ -303,7 +429,6 @@ function printPreview(findings, meta, opts = {}) {
     return;
   }
 
-  // Severity counts
   let highCount = 0, medCount = 0, lowCount = 0;
 
   for (const [filePath, blocks] of Object.entries(findings)) {
@@ -338,9 +463,7 @@ function printPreview(findings, meta, opts = {}) {
   console.log(`  ${paint(c.red, "Commented blocks:      ")} ${totalBlocks}`);
   console.log(`  ${paint(c.dim, "Lines affected:        ")} ${totalLines}`);
   console.log(`  ${paint(c.bold, "Severity breakdown:    ")} ${paint(c.red, `🔴 ${highCount} high`)}  ${paint(c.yellow, `🟡 ${medCount} medium`)}  ${paint(c.green, `🟢 ${lowCount} low`)}`);
-  if (opts.dryRun) {
-    console.log(paint(c.cyan + c.bold, `\n  🧪 Dry run — no files were changed.\n`));
-  }
+  if (opts.dryRun) console.log(paint(c.cyan + c.bold, `\n  🧪 Dry run — no files were changed.\n`));
   console.log();
 }
 
@@ -351,30 +474,21 @@ function renderJson(findings, meta) {
   const totalLines = Object.values(findings).reduce(
     (s, blocks) => s + blocks.reduce((ss, b) => ss + (b.endLine - b.startLine + 1), 0), 0
   );
-
   const output = {
     generatedAt: new Date().toISOString(),
     scannedPath: meta.targetPath,
     extensions: [...meta.extensions],
-    summary: {
-      filesScanned: meta.totalFiles,
-      filesWithIssues: fileCount,
-      commentedBlocks: totalBlocks,
-      linesAffected: totalLines,
-    },
+    summary: { filesScanned: meta.totalFiles, filesWithIssues: fileCount, commentedBlocks: totalBlocks, linesAffected: totalLines },
     files: {},
   };
-
   for (const [filePath, blocks] of Object.entries(findings)) {
     output.files[filePath] = blocks.map(block => ({
-      startLine: block.startLine,
-      endLine: block.endLine,
+      startLine: block.startLine, endLine: block.endLine,
       lineCount: block.endLine - block.startLine + 1,
       severity: getSeverity(block).label.replace(/[🔴🟡🟢] /, "").toLowerCase(),
       code: block.lines.map(l => l.raw).join("\n"),
     }));
   }
-
   return JSON.stringify(output, null, 2);
 }
 
@@ -386,7 +500,6 @@ function renderReport(findings, meta) {
   const totalLines = Object.values(findings).reduce(
     (s, blocks) => s + blocks.reduce((ss, b) => ss + (b.endLine - b.startLine + 1), 0), 0
   );
-
   let highCount = 0, medCount = 0, lowCount = 0;
   for (const blocks of Object.values(findings)) {
     for (const block of blocks) {
@@ -396,7 +509,6 @@ function renderReport(findings, meta) {
       else lowCount++;
     }
   }
-
   const lines = [
     "# 🧹 Comment Cleaner Report", "",
     `> **Generated:** ${now}  `,
@@ -413,7 +525,6 @@ function renderReport(findings, meta) {
     `| 🟢 Low severity (1–3 lines) | ${lowCount} |`,
     "", "---", "", "## Findings", "",
   ];
-
   if (fileCount === 0) {
     lines.push("✅ No commented-out code detected. Your codebase is clean!");
   } else {
@@ -421,9 +532,7 @@ function renderReport(findings, meta) {
       lines.push(`### \`${filePath}\``);
       lines.push("");
       for (const block of blocks) {
-        const range = block.startLine === block.endLine
-          ? `Line ${block.startLine}`
-          : `Lines ${block.startLine}–${block.endLine}`;
+        const range = block.startLine === block.endLine ? `Line ${block.startLine}` : `Lines ${block.startLine}–${block.endLine}`;
         const sev = getSeverity(block);
         lines.push(`**${range}** — ${block.lines.length} line(s) — ${sev.label}`);
         lines.push("```");
@@ -433,7 +542,6 @@ function renderReport(findings, meta) {
       }
     }
   }
-
   lines.push("---");
   lines.push("*Generated by comment-cleaner*");
   return lines.join("\n");
@@ -447,7 +555,6 @@ function renderHtml(findings, meta) {
   const totalLines = Object.values(findings).reduce(
     (s, blocks) => s + blocks.reduce((ss, b) => ss + (b.endLine - b.startLine + 1), 0), 0
   );
-
   let highCount = 0, medCount = 0, lowCount = 0;
   for (const blocks of Object.values(findings)) {
     for (const block of blocks) {
@@ -457,18 +564,14 @@ function renderHtml(findings, meta) {
       else lowCount++;
     }
   }
-
   const escape = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
   let filesSections = "";
   for (const [filePath, blocks] of Object.entries(findings)) {
     let blockHtml = "";
     for (const block of blocks) {
       const sev = getSeverity(block);
       const sevClass = sev === SEVERITY.HIGH ? "high" : sev === SEVERITY.MEDIUM ? "medium" : "low";
-      const range = block.startLine === block.endLine
-        ? `Line ${block.startLine}`
-        : `Lines ${block.startLine}–${block.endLine}`;
+      const range = block.startLine === block.endLine ? `Line ${block.startLine}` : `Lines ${block.startLine}–${block.endLine}`;
       const code = block.lines.map(l => escape(l.raw)).join("\n");
       blockHtml += `
         <div class="block ${sevClass}">
@@ -490,7 +593,6 @@ function renderHtml(findings, meta) {
         <div class="blocks">${blockHtml}</div>
       </div>`;
   }
-
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -567,9 +669,7 @@ function renderHtml(findings, meta) {
 function runWatch(targetPath, opts) {
   console.log(paint(c.magenta + c.bold, `\n👀 Watch mode active — monitoring for changes...`));
   console.log(paint(c.dim, `   Press Ctrl+C to stop.\n`));
-
   const debounceMap = {};
-
   function scanFile(filePath) {
     const ext = path.extname(filePath).toLowerCase();
     const lang = LANGUAGES[ext];
@@ -589,75 +689,41 @@ function runWatch(targetPath, opts) {
       console.log(paint(c.dim, `\n   Run: comment-cleaner ${relPath} --fix  to remove\n`));
     }
   }
-
   function watchDir(dirPath) {
     const ignore = new Set([...DEFAULT_IGNORE, ...opts.extraIgnore]);
     fs.watch(dirPath, { recursive: true }, (eventType, filename) => {
       if (!filename) return;
       const fullPath = path.join(dirPath, filename);
-      const parts = fullPath.split(path.sep);
-      if (parts.some(p => ignore.has(p))) return;
+      if (fullPath.split(path.sep).some(p => ignore.has(p))) return;
       const ext = path.extname(filename).toLowerCase();
       if (!opts.extensions.has(ext)) return;
       clearTimeout(debounceMap[fullPath]);
-      debounceMap[fullPath] = setTimeout(() => {
-        if (fs.existsSync(fullPath)) scanFile(fullPath);
-      }, 300);
+      debounceMap[fullPath] = setTimeout(() => { if (fs.existsSync(fullPath)) scanFile(fullPath); }, 300);
     });
   }
-
-  const files = fs.statSync(targetPath).isFile()
-    ? [targetPath]
-    : walkDir(targetPath, opts.extensions, opts.extraIgnore);
-
+  const files = fs.statSync(targetPath).isFile() ? [targetPath] : walkDir(targetPath, opts.extensions, opts.extraIgnore);
   const findings = {};
   for (const filePath of files) {
     const ext = path.extname(filePath).toLowerCase();
     const lang = LANGUAGES[ext];
     if (!lang) continue;
-    try {
-      const blocks = parseFile(filePath, lang);
-      if (blocks.length > 0) findings[path.relative(process.cwd(), filePath)] = blocks;
-    } catch { continue; }
+    try { const blocks = parseFile(filePath, lang); if (blocks.length > 0) findings[path.relative(process.cwd(), filePath)] = blocks; } catch { continue; }
   }
-
-  if (Object.keys(findings).length > 0) {
-    console.log(paint(c.yellow, `Found existing issues on startup:\n`));
-    printPreview(findings, { totalFiles: files.length, extensions: opts.extensions, targetPath });
-  } else {
-    console.log(paint(c.green, `✅  No issues found on startup. Watching for new changes...\n`));
-  }
-
-  if (fs.statSync(targetPath).isFile()) {
-    fs.watch(targetPath, () => {
-      clearTimeout(debounceMap[targetPath]);
-      debounceMap[targetPath] = setTimeout(() => scanFile(targetPath), 300);
-    });
-  } else {
-    watchDir(targetPath);
-  }
+  if (Object.keys(findings).length > 0) { console.log(paint(c.yellow, `Found existing issues on startup:\n`)); printPreview(findings, { totalFiles: files.length, extensions: opts.extensions, targetPath }); }
+  else { console.log(paint(c.green, `✅  No issues found on startup. Watching for new changes...\n`)); }
+  if (fs.statSync(targetPath).isFile()) { fs.watch(targetPath, () => { clearTimeout(debounceMap[targetPath]); debounceMap[targetPath] = setTimeout(() => scanFile(targetPath), 300); }); }
+  else { watchDir(targetPath); }
 }
 
 // ─── Arg parser ───────────────────────────────────────────────────────────────
 function parseArgs(argv) {
   const args = argv.slice(2);
   const opts = {
-    targetPath: ".",
-    report: false,
-    reportPath: null,
-    extensions: null,
-    extraIgnore: [],
-    noPreview: false,
-    fix: false,
-    dryRun: false,
-    watch: false,
-    json: false,
-    jsonPath: null,
-    html: false,
-    htmlPath: null,
-    help: false,
+    targetPath: ".", report: false, reportPath: null, extensions: null,
+    extraIgnore: [], noPreview: false, fix: false, dryRun: false,
+    watch: false, json: false, jsonPath: null, html: false, htmlPath: null,
+    interactive: false, stats: false, threshold: null, outputDir: null, help: false,
   };
-
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "-h" || a === "--help") { opts.help = true; }
@@ -665,6 +731,10 @@ function parseArgs(argv) {
     else if (a === "-f" || a === "--fix") { opts.fix = true; }
     else if (a === "--dry-run") { opts.dryRun = true; }
     else if (a === "-w" || a === "--watch") { opts.watch = true; }
+    else if (a === "-i" || a === "--interactive") { opts.interactive = true; }
+    else if (a === "--stats") { opts.stats = true; }
+    else if (a === "--threshold") { opts.threshold = parseInt(args[++i], 10) || 0; }
+    else if (a === "--output-dir") { opts.outputDir = args[++i]; }
     else if (a === "--json") { opts.json = true; if (args[i + 1] && !args[i + 1].startsWith("-")) opts.jsonPath = args[++i]; }
     else if (a === "--html") { opts.html = true; if (args[i + 1] && !args[i + 1].startsWith("-")) opts.htmlPath = args[++i]; }
     else if (a === "-e" || a === "--ext") { const raw = args[++i] || ""; opts.extensions = new Set(raw.split(",").map(e => e.startsWith(".") ? e.toLowerCase() : "." + e.toLowerCase())); }
@@ -672,7 +742,6 @@ function parseArgs(argv) {
     else if (a === "--no-preview") { opts.noPreview = true; }
     else if (!a.startsWith("-")) { opts.targetPath = a; }
   }
-
   return opts;
 }
 
@@ -684,16 +753,20 @@ ${paint(c.bold, "Usage:")}
   comment-cleaner [path] [options]
 
 ${paint(c.bold, "Options:")}
-  -h, --help              Show this help
-  -r, --report [file]     Save findings as a Markdown report
-  -f, --fix               Auto-remove all commented-out code
-      --dry-run           Preview what --fix would remove (no changes made)
-  -w, --watch             Watch mode — real time alerts as you code
-      --json [file]       Output results as JSON (stdout or file)
-      --html [file]       Generate a beautiful HTML report
-  -e, --ext .js,.ts       Only scan specific extensions
-      --ignore dir1,dir2  Extra directories to skip
-      --no-preview        Suppress terminal output
+  -h, --help                Show this help
+  -r, --report [file]       Save findings as a Markdown report
+  -f, --fix                 Auto-remove all commented-out code
+  -i, --interactive         Step through each block and choose what to delete
+      --dry-run             Preview what --fix would remove (no changes made)
+  -w, --watch               Watch mode — real time alerts as you code
+      --stats               Show scan history and trend over time
+      --threshold <n>       Exit with error if commented blocks exceed n (for CI)
+      --output-dir <dir>    Save all reports (HTML, JSON, MD) to a folder
+      --json [file]         Output results as JSON (stdout or file)
+      --html [file]         Generate a beautiful HTML report
+  -e, --ext .js,.ts         Only scan specific extensions
+      --ignore dir1,dir2    Extra directories to skip
+      --no-preview          Suppress terminal output
 
 ${paint(c.bold, "@keep annotation:")}
   Add @keep to any comment to permanently exclude it from detection:
@@ -709,19 +782,21 @@ ${paint(c.bold, "Supported languages:")}
   Go · Java · Kotlin · Rust · Ruby · PHP · C/C++ · Swift
 
 ${paint(c.bold, "Examples:")}
-  comment-cleaner ./src                  Preview findings with severity
-  comment-cleaner ./src --dry-run        Show what --fix would remove
-  comment-cleaner ./src --fix            Remove all dead comments
-  comment-cleaner ./src --watch          Watch for new commented code
-  comment-cleaner ./src --html           Open report in browser
-  comment-cleaner ./src --html out.html  Save HTML report to file
-  comment-cleaner ./src --json           Print JSON to stdout
-  comment-cleaner ./src -r               Save Markdown report
+  comment-cleaner ./src                    Preview with severity
+  comment-cleaner ./src --dry-run          Show what --fix would remove
+  comment-cleaner ./src --fix              Remove all dead comments
+  comment-cleaner ./src -i                 Interactive — pick block by block
+  comment-cleaner ./src --stats            Show scan history & trend
+  comment-cleaner ./src --threshold 5      Fail CI if more than 5 blocks
+  comment-cleaner ./src --output-dir ./reports  Save all reports to folder
+  comment-cleaner ./src --watch            Watch for new commented code
+  comment-cleaner ./src --html             Generate HTML report
+  comment-cleaner ./src -r                 Save Markdown report
 `);
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-function main() {
+async function main() {
   let opts = parseArgs(process.argv);
   if (opts.help) { printHelp(); process.exit(0); }
 
@@ -731,11 +806,11 @@ function main() {
 ║  Scan · Fix · Watch · Report         ║
 ╚══════════════════════════════════════╝`));
 
+  // --stats: show history and exit
+  if (opts.stats) { printStats(); process.exit(0); }
+
   const targetPath = path.resolve(opts.targetPath);
-  if (!fs.existsSync(targetPath)) {
-    console.error(paint(c.red, `\n❌  Path not found: ${targetPath}\n`));
-    process.exit(1);
-  }
+  if (!fs.existsSync(targetPath)) { console.error(paint(c.red, `\n❌  Path not found: ${targetPath}\n`)); process.exit(1); }
 
   const config = loadConfig(path.dirname(targetPath));
   opts = applyConfig(opts, config);
@@ -744,10 +819,11 @@ function main() {
   console.log(paint(c.blue, `\n🔍 Scanning: ${paint(c.bold + c.blue, targetPath)}`));
   console.log(paint(c.dim, `   Extensions : ${[...opts.extensions].join("  ")}`));
   if (opts.fix) console.log(paint(c.yellow, `   Mode       : --fix`));
-  if (opts.dryRun) console.log(paint(c.cyan, `   Mode       : --dry-run (no files will be changed)`));
+  if (opts.dryRun) console.log(paint(c.cyan, `   Mode       : --dry-run`));
+  if (opts.interactive) console.log(paint(c.magenta, `   Mode       : --interactive`));
   if (opts.watch) console.log(paint(c.magenta, `   Mode       : --watch`));
-  if (opts.json) console.log(paint(c.cyan, `   Mode       : --json`));
-  if (opts.html) console.log(paint(c.cyan, `   Mode       : --html`));
+  if (opts.threshold !== null) console.log(paint(c.yellow, `   Threshold  : fail if > ${opts.threshold} blocks`));
+  if (opts.outputDir) console.log(paint(c.cyan, `   Output dir : ${opts.outputDir}`));
   if (opts.extraIgnore.length) console.log(paint(c.dim, `   Extra ignore: ${opts.extraIgnore.join(", ")}`));
   console.log();
 
@@ -768,36 +844,73 @@ function main() {
     if (blocks.length > 0) findings[path.relative(process.cwd(), filePath)] = blocks;
   }
 
-  const meta = {
-    targetPath: path.relative(process.cwd(), targetPath) || ".",
-    totalFiles: files.length,
-    extensions: opts.extensions,
-  };
+  const meta = { targetPath: path.relative(process.cwd(), targetPath) || ".", totalFiles: files.length, extensions: opts.extensions };
+  const totalBlocks = Object.values(findings).reduce((s, b) => s + b.length, 0);
+
+  // Record this run in stats history
+  recordRun(meta, findings);
 
   if (!opts.noPreview && !opts.json) printPreview(findings, meta, opts);
 
   // JSON
   if (opts.json) {
     const jsonStr = renderJson(findings, meta);
-    if (opts.jsonPath) {
-      fs.writeFileSync(opts.jsonPath, jsonStr, "utf8");
-      console.log(paint(c.green + c.bold, `📦 JSON saved → ${opts.jsonPath}\n`));
+    const outPath = opts.outputDir ? path.join(opts.outputDir, "comment-cleaner.json") : opts.jsonPath;
+    if (outPath) { fs.mkdirSync(path.dirname(outPath), { recursive: true }); fs.writeFileSync(outPath, jsonStr, "utf8"); console.log(paint(c.green + c.bold, `📦 JSON saved → ${outPath}\n`)); }
+    else { console.log(jsonStr); }
+  }
+
+  // HTML
+  if (opts.html) {
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const htmlPath = opts.outputDir ? path.join(opts.outputDir, "comment-cleaner.html") : (opts.htmlPath || `comment-cleaner-${timestamp}.html`);
+    fs.mkdirSync(path.dirname(htmlPath), { recursive: true });
+    fs.writeFileSync(htmlPath, renderHtml(findings, meta), "utf8");
+    console.log(paint(c.green + c.bold, `🌐 HTML report saved → ${htmlPath}\n`));
+  }
+
+  // Markdown report
+  if (opts.report) {
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const reportPath = opts.outputDir ? path.join(opts.outputDir, "comment-cleaner.md") : (opts.reportPath || `comment-cleaner-${timestamp}.md`);
+    fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+    fs.writeFileSync(reportPath, renderReport(findings, meta), "utf8");
+    console.log(paint(c.green + c.bold, `📊 Report saved → ${reportPath}\n`));
+  }
+
+  // --output-dir: save all three if flag used without specific flags
+  if (opts.outputDir && !opts.json && !opts.html && !opts.report) {
+    const timestamp = new Date().toISOString().slice(0, 10);
+    fs.mkdirSync(opts.outputDir, { recursive: true });
+    fs.writeFileSync(path.join(opts.outputDir, "comment-cleaner.json"), renderJson(findings, meta), "utf8");
+    fs.writeFileSync(path.join(opts.outputDir, "comment-cleaner.html"), renderHtml(findings, meta), "utf8");
+    fs.writeFileSync(path.join(opts.outputDir, `comment-cleaner.md`), renderReport(findings, meta), "utf8");
+    console.log(paint(c.green + c.bold, `📁 All reports saved to: ${opts.outputDir}/\n`));
+    console.log(paint(c.dim, `   comment-cleaner.html · comment-cleaner.json · comment-cleaner.md\n`));
+  }
+
+  // Interactive mode
+  if (opts.interactive && !opts.dryRun) {
+    const toRemove = await runInteractive(findings);
+    const filesToFix = Object.keys(toRemove);
+    if (filesToFix.length === 0) {
+      console.log(paint(c.green, "\n✅  No blocks selected for deletion.\n"));
     } else {
-      console.log(jsonStr);
+      console.log(paint(c.yellow + c.bold, `\n🔧 Applying deletions to ${filesToFix.length} file(s)...\n`));
+      for (const [relPath, blocks] of Object.entries(toRemove)) {
+        try {
+          fixFile(path.resolve(relPath), blocks);
+          console.log(paint(c.green, `  ✅ ${relPath}`) + paint(c.dim, `  (${blocks.length} block${blocks.length > 1 ? "s" : ""} removed)`));
+        } catch (err) {
+          console.warn(paint(c.red, `  ❌ Could not fix ${relPath}: ${err.message}`));
+        }
+      }
+      console.log(paint(c.green + c.bold, `\n🎉 Done!\n`));
     }
   }
 
-  // HTML report
-  if (opts.html) {
-    const timestamp = new Date().toISOString().slice(0, 10);
-    const htmlPath = opts.htmlPath || `comment-cleaner-${timestamp}.html`;
-    fs.writeFileSync(htmlPath, renderHtml(findings, meta), "utf8");
-    console.log(paint(c.green + c.bold, `🌐 HTML report saved → ${htmlPath}\n`));
-    console.log(paint(c.dim, `   Open it in your browser to view the full report.\n`));
-  }
-
-  // Fix (skipped in dry-run)
-  if (opts.fix && !opts.dryRun) {
+  // Fix (non-interactive)
+  if (opts.fix && !opts.dryRun && !opts.interactive) {
     const fileCount = Object.keys(findings).length;
     if (fileCount === 0) {
       console.log(paint(c.green, "✅  Nothing to fix — codebase is already clean!\n"));
@@ -817,17 +930,21 @@ function main() {
     }
   }
 
-  // Markdown report
-  if (opts.report) {
-    const timestamp = new Date().toISOString().slice(0, 10);
-    const reportPath = opts.reportPath || `comment-cleaner-${timestamp}.md`;
-    fs.writeFileSync(reportPath, renderReport(findings, meta), "utf8");
-    console.log(paint(c.green + c.bold, `📊 Report saved → ${reportPath}\n`));
-  } else if (!opts.fix && !opts.json && !opts.html && !opts.dryRun) {
-    console.log(paint(c.dim, "  💡 --fix · --dry-run · -r · --html · --json · --watch\n"));
+  if (!opts.fix && !opts.dryRun && !opts.json && !opts.html && !opts.report && !opts.interactive && !opts.outputDir) {
+    console.log(paint(c.dim, "  💡 --fix · -i · --dry-run · -r · --html · --json · --watch · --stats · --output-dir\n"));
   }
 
-  if (!opts.fix && !opts.dryRun && Object.keys(findings).length > 0) process.exitCode = 1;
+  // --threshold: fail CI if block count exceeds limit
+  if (opts.threshold !== null) {
+    if (totalBlocks > opts.threshold) {
+      console.log(paint(c.red + c.bold, `\n❌  Threshold exceeded: ${totalBlocks} blocks found, limit is ${opts.threshold}\n`));
+      process.exit(1);
+    } else {
+      console.log(paint(c.green + c.bold, `\n✅  Threshold passed: ${totalBlocks} blocks found, limit is ${opts.threshold}\n`));
+    }
+  } else if (!opts.fix && !opts.dryRun && totalBlocks > 0) {
+    process.exitCode = 1;
+  }
 }
 
 main();

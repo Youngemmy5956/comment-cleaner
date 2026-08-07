@@ -423,7 +423,7 @@ Open an issue at [github.com/Youngemmy5956/comment-cleaner/issues](https://githu
 ## 👨‍💻 Author
 
 **Nwamini Emmanuel O**
-- GitHub: [@Youngemmy5956](https://github.com/Youngemmy5956)
+- GitHub: [@Youngemmy5956](https://github.com/DevNwamini)
 - Email: [emmanuelgodwin558@gmail.com](mailto:emmanuelgodwin558@gmail.com)
 - npm: [@youngemmy](https://www.npmjs.com/~youngemmy)
 
